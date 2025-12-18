@@ -1,6 +1,9 @@
 const { pathToFileURL } = require("url");
 const { createRequire } = require("module");
 
+const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
+const BLACKBOX_BASE_URL = "https://api.blackbox.ai";
+
 const FALLBACK_MODELS = [
   "blackboxai/openai/gpt-4o-mini",
   "blackboxai/meta-llama/llama-3.3-70b-instruct",
@@ -8,65 +11,61 @@ const FALLBACK_MODELS = [
 
 const STANDARD_MODELS = [
   {
-    agent: "efficient_backup",
-    agentName: "GPT-4o Mini",
-    primary: "blackboxai/openai/gpt-4o-mini",
+    agent: "cerebras_llama_70b",
+    agentName: "Cerebras Llama 3.3 70B",
+    provider: "cerebras",
+    primary: "llama-3.3-70b",
     fallbacks: [],
   },
   {
-    agent: "generalist",
-    agentName: "Llama 3.3",
-    primary: "blackboxai/meta-llama/llama-3.3-70b-instruct",
+    agent: "cerebras_llama_8b",
+    agentName: "Cerebras Llama 3.1 8B",
+    provider: "cerebras",
+    primary: "llama3.1-8b",
     fallbacks: [],
   },
   {
-    agent: "context_king",
-    agentName: "GPT-4o",
-    primary: "blackboxai/openai/gpt-4o",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "reasoner",
-    agentName: "DeepSeek V3",
-    primary: "blackboxai/deepseek/deepseek-chat",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "math_code_wizard",
-    agentName: "Claude 3 Haiku",
-    primary: "blackboxai/anthropic/claude-3-haiku",
-    fallbacks: FALLBACK_MODELS,
+    agent: "cerebras_gpt_oss_120b",
+    agentName: "Cerebras GPT-OSS 120B",
+    provider: "cerebras",
+    primary: "gpt-oss-120b",
+    fallbacks: [],
   },
 ];
 
 const THINKING_NEXUS_MODELS = [
   {
-    agent: "god_tier_hermes",
+    agent: "deepseek_v3",
+    agentName: "DeepSeek V3",
+    provider: "blackbox",
+    primary: "blackboxai/deepseek/deepseek-chat",
+    fallbacks: FALLBACK_MODELS,
+  },
+  {
+    agent: "hermes_405b",
     agentName: "Hermes 3 405B",
+    provider: "blackbox",
     primary: "blackboxai/nousresearch/hermes-3-llama-3.1-405b",
     fallbacks: FALLBACK_MODELS,
   },
   {
-    agent: "god_tier_gpt4o",
+    agent: "llama_70b_instruct",
+    agentName: "Llama 3.3 70B Instruct",
+    provider: "blackbox",
+    primary: "blackboxai/meta-llama/llama-3.3-70b-instruct",
+    fallbacks: [],
+  },
+  {
+    agent: "gpt_4o",
     agentName: "GPT-4o",
+    provider: "blackbox",
     primary: "blackboxai/openai/gpt-4o",
     fallbacks: FALLBACK_MODELS,
   },
   {
-    agent: "god_tier_haiku",
+    agent: "claude_haiku",
     agentName: "Claude 3 Haiku",
-    primary: "blackboxai/anthropic/claude-3-haiku",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "god_tier_gpt4o_2",
-    agentName: "GPT-4o",
-    primary: "blackboxai/openai/gpt-4o",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "god_tier_haiku_2",
-    agentName: "Claude 3 Haiku",
+    provider: "blackbox",
     primary: "blackboxai/anthropic/claude-3-haiku",
     fallbacks: FALLBACK_MODELS,
   },
@@ -99,11 +98,11 @@ async function loadOpenAI() {
   return mod?.default ?? mod?.OpenAI ?? mod;
 }
 
-async function createClient(apiKey) {
+async function createClient({ apiKey, baseURL }) {
   const OpenAI = await loadOpenAI();
   return new OpenAI({
     apiKey,
-    baseURL: "https://api.blackbox.ai",
+    baseURL,
   });
 }
 
@@ -209,22 +208,29 @@ function toExecution({ agent, model, completion, content, error }) {
 }
 
 async function step1Swarm(userQuery, options = {}) {
-  const apiKey = options.apiKey || process.env.BLACKBOX_API_KEY || "";
+  const blackboxApiKey = options.blackboxApiKey || options.apiKey || process.env.BLACKBOX_API_KEY || "";
+  const cerebrasApiKey = options.cerebrasApiKey || process.env.CEREBRAS_API_KEY || "";
   const emit = options.emit;
   const thinkingNexus = Boolean(options.thinkingNexus);
   const models = thinkingNexus ? THINKING_NEXUS_MODELS : STANDARD_MODELS;
   const selectedAgents = models.map((m) => ({ agent: m.agent, model: m.primary }));
+  const activeApiKey = thinkingNexus ? blackboxApiKey : cerebrasApiKey;
+  const baseURL = thinkingNexus ? BLACKBOX_BASE_URL : CEREBRAS_BASE_URL;
 
   if (!String(userQuery || "").trim()) {
     throw new Error("Step 1 failed: missing user query");
   }
 
   if (
-    !apiKey ||
-    apiKey === "PLACEHOLDER_KEY_HERE" ||
-    apiKey === "PASTE_YOUR_KEY_HERE"
+    !activeApiKey ||
+    activeApiKey === "PLACEHOLDER_KEY_HERE" ||
+    activeApiKey === "PASTE_YOUR_KEY_HERE"
   ) {
-    throw new Error("[APEX SECURITY]: API Key missing in .env file.");
+    throw new Error(
+      thinkingNexus
+        ? "[APEX SECURITY]: BLACKBOX_API_KEY missing in .env file."
+        : "[APEX SECURITY]: CEREBRAS_API_KEY missing in .env file."
+    );
   }
 
   if (!Array.isArray(selectedAgents) || selectedAgents.length !== models.length) {
@@ -240,7 +246,7 @@ async function step1Swarm(userQuery, options = {}) {
       type: "log",
       step: 1,
       at: startedAt,
-      message: thinkingNexus ? "Thinking Nexus engaged. Spawning Power 5." : "Standard Mode engaged. Spawning Elite 5.",
+      message: thinkingNexus ? "Thinking Nexus engaged. Spawning Power 5." : "Standard Mode engaged. Spawning Cerebras 3.",
     });
 
     for (const m of models) {
@@ -248,8 +254,8 @@ async function step1Swarm(userQuery, options = {}) {
       emit?.({ type: "log", step: 1, at: Date.now(), message: `${m.agentName} connected...` });
     }
 
-    const client = await createClient(apiKey);
-    const timeoutMs = thinkingNexus ? 90000 : 45000;
+    const client = await createClient({ apiKey: activeApiKey, baseURL });
+    const timeoutMs = thinkingNexus ? 15000 : 20000;
 
     const system = thinkingNexus
       ? [
@@ -397,7 +403,7 @@ async function step1Swarm(userQuery, options = {}) {
 
     const usable = executions.filter((e) => String(e?.result?.content || "").trim());
     if (usable.length === 0) {
-      throw new Error(`Swarm failed for all models (${models.length}) (key ${maskKey(apiKey)})`);
+      throw new Error(`Swarm failed for all models (${models.length}) (key ${maskKey(activeApiKey)})`);
     }
 
     const finishedAt = Date.now();
