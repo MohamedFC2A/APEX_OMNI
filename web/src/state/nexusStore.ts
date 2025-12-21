@@ -82,6 +82,16 @@ function cloneDefaultSteps() {
   return defaultSteps.map((s) => ({ ...s }));
 }
 
+function shallowEqualStringArray(a: string[], b: string[]) {
+  if (a === b) return true;
+  if (!Array.isArray(a) || !Array.isArray(b)) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i += 1) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export const useNexusStore = create<NexusState>((set) => ({
   steps: cloneDefaultSteps(),
   agents: [],
@@ -102,11 +112,18 @@ export const useNexusStore = create<NexusState>((set) => ({
       typingChunks: [],
       typingIntervalMs: 22,
     }),
-  setConnection: (connection) => set({ connection }),
-  setError: (message) => set({ errorMessage: message, connection: "error" }),
-  setAnswer: (answer) => set({ answer }),
+  setConnection: (connection) => set((state) => (state.connection === connection ? state : { connection })),
+  setError: (message) =>
+    set((state) =>
+      state.connection === "error" && state.errorMessage === message ? state : { errorMessage: message, connection: "error" }
+    ),
+  setAnswer: (answer) => set((state) => (state.answer === answer ? state : { answer })),
   setTypingChunks: (chunks, intervalMs) =>
-    set({ typingChunks: chunks, typingIntervalMs: typeof intervalMs === "number" ? intervalMs : 22 }),
+    set((state) => {
+      const nextInterval = typeof intervalMs === "number" ? intervalMs : 22;
+      if (state.typingIntervalMs === nextInterval && shallowEqualStringArray(state.typingChunks, chunks)) return state;
+      return { typingChunks: chunks, typingIntervalMs: nextInterval };
+    }),
   markStepStarted: (stepId, at) =>
     set((state) => ({
       steps: state.steps.map((s) =>
@@ -174,7 +191,7 @@ export const useNexusStore = create<NexusState>((set) => ({
         };
       }),
     })),
-  setAgents: (agents) => set({ agents }),
+  setAgents: (agents) => set((state) => (state.agents === agents ? state : { agents })),
   markAgentStart: (agent, at) =>
     set((state) => ({
       agents: state.agents.map((a) =>

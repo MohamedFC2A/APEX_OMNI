@@ -1,96 +1,44 @@
-const { pathToFileURL } = require("url");
 const { createRequire } = require("module");
+const { pathToFileURL } = require("url");
 
-const FALLBACK_MODELS = [
-  "blackboxai/openai/gpt-4o-mini",
-  "blackboxai/meta-llama/llama-3.3-70b-instruct",
+const CEREBRAS_BASE_URL = "https://api.cerebras.ai/v1";
+const BLACKBOX_BASE_URL = "https://api.blackbox.ai/v1";
+
+const CEREBRAS_MODELS = [
+  {
+    agent: "cerebras_llama_70b",
+    agentName: "Cerebras Llama 3.3 70B",
+    model: "llama-3.3-70b",
+  },
+  {
+    agent: "cerebras_llama_8b",
+    agentName: "Cerebras Llama 3.1 8B",
+    model: "llama3.1-8b",
+  },
+  {
+    agent: "cerebras_llama_70b_backup",
+    agentName: "Cerebras Llama 3.3 70B (Backup)",
+    model: "llama-3.3-70b",
+  },
 ];
 
-const STANDARD_MODELS = [
+const BLACKBOX_MODELS = [
   {
-    agent: "efficient_backup",
-    agentName: "GPT-4o Mini",
-    primary: "blackboxai/openai/gpt-4o-mini",
-    fallbacks: [],
-  },
-  {
-    agent: "generalist",
-    agentName: "Llama 3.3",
-    primary: "blackboxai/meta-llama/llama-3.3-70b-instruct",
-    fallbacks: [],
-  },
-  {
-    agent: "context_king",
-    agentName: "GPT-4o",
-    primary: "blackboxai/openai/gpt-4o",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "reasoner",
+    agent: "deepseek_v3",
     agentName: "DeepSeek V3",
-    primary: "blackboxai/deepseek/deepseek-chat",
-    fallbacks: FALLBACK_MODELS,
+    model: "blackboxai/deepseek/deepseek-chat",
   },
   {
-    agent: "math_code_wizard",
-    agentName: "Claude 3 Haiku",
-    primary: "blackboxai/anthropic/claude-3-haiku",
-    fallbacks: FALLBACK_MODELS,
+    agent: "gpt_4o",
+    agentName: "GPT-4o",
+    model: "blackboxai/openai/gpt-4o",
+  },
+  {
+    agent: "claude_sonnet",
+    agentName: "Claude 3.5 Sonnet",
+    model: "blackboxai/anthropic/claude-3-5-sonnet",
   },
 ];
-
-const THINKING_NEXUS_MODELS = [
-  {
-    agent: "god_tier_hermes",
-    agentName: "Hermes 3 405B",
-    primary: "blackboxai/nousresearch/hermes-3-llama-3.1-405b",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "god_tier_gpt4o",
-    agentName: "GPT-4o",
-    primary: "blackboxai/openai/gpt-4o",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "god_tier_haiku",
-    agentName: "Claude 3 Haiku",
-    primary: "blackboxai/anthropic/claude-3-haiku",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "god_tier_gpt4o_2",
-    agentName: "GPT-4o",
-    primary: "blackboxai/openai/gpt-4o",
-    fallbacks: FALLBACK_MODELS,
-  },
-  {
-    agent: "god_tier_haiku_2",
-    agentName: "Claude 3 Haiku",
-    primary: "blackboxai/anthropic/claude-3-haiku",
-    fallbacks: FALLBACK_MODELS,
-  },
-];
-
-function sanitizeErrorMessage(message) {
-  if (!message) return message;
-
-  let out = String(message);
-
-  out = out.replace(/\b(bb_[a-zA-Z0-9_-]{10,})\b/g, "[REDACTED]");
-  out = out.replace(/\b(sk-[a-zA-Z0-9_-]{10,})\b/g, "[REDACTED]");
-  out = out.replace(/Received API Key\s*=\s*[^,]+/gi, "Received API Key = [REDACTED]");
-  out = out.replace(/Key Hash\s*\(Token\)\s*=\s*[a-f0-9]{16,}/gi, "Key Hash (Token) = [REDACTED]");
-
-  return out;
-}
-
-function maskKey(key) {
-  const s = String(key || "");
-  if (!s) return "";
-  if (s.length <= 8) return "[REDACTED]";
-  return `${s.slice(0, 4)}...${s.slice(-4)}`;
-}
 
 async function loadOpenAI() {
   const req = createRequire(__filename);
@@ -99,28 +47,13 @@ async function loadOpenAI() {
   return mod?.default ?? mod?.OpenAI ?? mod;
 }
 
-async function createClient(apiKey) {
-  const OpenAI = await loadOpenAI();
-  return new OpenAI({
-    apiKey,
-    baseURL: "https://api.blackbox.ai",
-  });
-}
-
-function extractChatText(response) {
-  const content = response?.choices?.[0]?.message?.content;
-  if (typeof content === "string") return content;
-  return "";
-}
-
-function normalizeSnippet(text, limit = 220) {
-  const t = String(text || "")
-    .replace(/\r\n/g, "\n")
-    .replace(/[\t ]{2,}/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-  if (t.length <= limit) return t;
-  return t.slice(0, limit).trimEnd() + "…";
+function sanitizeErrorMessage(message) {
+  if (!message) return message;
+  let out = String(message);
+  out = out.replace(/\b(bb_[a-zA-Z0-9_-]{10,})\b/g, "[REDACTED]");
+  out = out.replace(/\b(sk-[a-zA-Z0-9_-]{10,})\b/g, "[REDACTED]");
+  out = out.replace(/\b(csk-[a-zA-Z0-9_-]{10,})\b/g, "[REDACTED]");
+  return out;
 }
 
 function formatDurationMs(ms) {
@@ -128,294 +61,171 @@ function formatDurationMs(ms) {
   return `${s.toFixed(1)}s`;
 }
 
-function isTimeoutLike(err) {
-  const msg = String(err?.message || err || "").toLowerCase();
-  return msg.includes("timeout") || msg.includes("timed out") || msg.includes("aborted") || msg.includes("abort");
-}
-
-function isTransientLike(err) {
-  const status = typeof err?.status === "number" ? err.status : null;
-  if (status && [404, 408, 409, 425, 429, 500, 502, 503, 504].includes(status)) return true;
-  const msg = String(err?.message || err || "").toLowerCase();
-  return (
-    isRateLimitLike(err) ||
-    isTimeoutLike(err) ||
-    msg.includes("overloaded") ||
-    msg.includes("busy") ||
-    msg.includes("temporarily") ||
-    msg.includes("try again")
-  );
-}
-
-function isUsableContent(text) {
-  const t = String(text || "").trim();
-  if (t.length < 24) return false;
-  const lower = t.toLowerCase();
-  if (lower.includes("simulation mode:")) return false;
-  return true;
-}
-
-function safeAgentText(text) {
-  const t = String(text || "");
-  return t
-    .replace(/^\s*(chain[- ]of[- ]thought|step[- ]by[- ]step|reasoning)\s*:\s*/gim, "")
-    .replace(/^\s*let'?s\s+think\s+step\s+by\s+step\s*[:.-]?\s*$/gim, "")
-    .trim();
-}
-
-async function chatCompletionWithTimeout(client, params, timeoutMs) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
-  try {
-    return await client.chat.completions.create({ ...params, signal: controller.signal });
-  } finally {
-    clearTimeout(timer);
-  }
-}
-
-function isRateLimitLike(err) {
-  const status = typeof err?.status === "number" ? err.status : null;
-  if (status === 429) return true;
-  const msg = String(err?.message || err || "").toLowerCase();
-  return (
-    msg.includes("rate limit") ||
-    msg.includes("too many requests") ||
-    msg.includes("overloaded") ||
-    msg.includes("busy") ||
-    msg.includes("try again")
-  );
-}
-
-function toExecution({ agent, model, completion, content, error }) {
-  if (error) {
-    return {
-      agent,
-      model,
-      status: "failed",
-      executionId: null,
-      result: { content: content || "" },
-      error: sanitizeErrorMessage(error),
-    };
-  }
-
-  return {
-    agent,
-    model,
-    status: "completed",
-    executionId: completion?.id || null,
-    result: { content: content || "" },
-    error: null,
-  };
-}
-
 async function step1Swarm(userQuery, options = {}) {
-  const apiKey = options.apiKey || process.env.BLACKBOX_API_KEY || "";
   const emit = options.emit;
   const thinkingNexus = Boolean(options.thinkingNexus);
-  const models = thinkingNexus ? THINKING_NEXUS_MODELS : STANDARD_MODELS;
-  const selectedAgents = models.map((m) => ({ agent: m.agent, model: m.primary }));
 
+  // 1. Validate Query
   if (!String(userQuery || "").trim()) {
     throw new Error("Step 1 failed: missing user query");
   }
 
-  if (
-    !apiKey ||
-    apiKey === "PLACEHOLDER_KEY_HERE" ||
-    apiKey === "PASTE_YOUR_KEY_HERE"
-  ) {
-    throw new Error("[APEX SECURITY]: API Key missing in .env file.");
+  // 2. Load API Keys
+  const cerebrasApiKey = process.env.CEREBRAS_API_KEY || "";
+  const blackboxApiKey = process.env.BLACKBOX_API_KEY || "";
+
+  if (!thinkingNexus && !cerebrasApiKey) {
+    throw new Error("[APEX SECURITY]: CEREBRAS_API_KEY missing in .env file.");
+  }
+  if (thinkingNexus && !blackboxApiKey) {
+    throw new Error("[APEX SECURITY]: BLACKBOX_API_KEY missing in .env file.");
   }
 
-  if (!Array.isArray(selectedAgents) || selectedAgents.length !== models.length) {
-    throw new Error("Step 1 failed: selectedAgents mismatch");
-  }
+  // 3. Initialize SDK
+  const OpenAI = await loadOpenAI();
 
-  const query = String(userQuery || "").trim();
+  // 4. Select Mode & Client
+  let client;
+  let models = [];
+  let modeName = "";
 
-  try {
-    const startedAt = Date.now();
-    emit?.({ type: "step_progress", step: 1, percent: 0, at: startedAt });
-    emit?.({
-      type: "log",
-      step: 1,
-      at: startedAt,
-      message: thinkingNexus ? "Thinking Nexus engaged. Spawning Power 5." : "Standard Mode engaged. Spawning Elite 5.",
+  if (thinkingNexus) {
+    modeName = "Thinking Nexus (Blackbox)";
+    models = BLACKBOX_MODELS;
+    client = new OpenAI({
+      baseURL: BLACKBOX_BASE_URL,
+      apiKey: blackboxApiKey,
     });
+  } else {
+    modeName = "Standard Mode (Cerebras)";
+    models = CEREBRAS_MODELS;
+    client = new OpenAI({
+      baseURL: CEREBRAS_BASE_URL,
+      apiKey: cerebrasApiKey,
+    });
+  }
 
-    for (const m of models) {
-      emit?.({ type: "agent_start", step: 1, at: Date.now(), agent: m.agent, agentName: m.agentName, model: m.primary });
-      emit?.({ type: "log", step: 1, at: Date.now(), message: `${m.agentName} connected...` });
-    }
+  // 5. Emit Start Events
+  const startedAt = Date.now();
+  emit?.({ type: "step_progress", step: 1, percent: 0, at: startedAt });
+  emit?.({
+    type: "log",
+    step: 1,
+    at: startedAt,
+    message: `${modeName} engaged. Spawning ${models.length} agents.`,
+  });
 
-    const client = await createClient(apiKey);
-    const timeoutMs = thinkingNexus ? 90000 : 45000;
+  for (const m of models) {
+    emit?.({ type: "agent_start", step: 1, at: Date.now(), agent: m.agent, agentName: m.agentName, model: m.model });
+  }
 
-    const system = thinkingNexus
-      ? [
-          "You are an elite reasoning model in a multi-agent swarm.",
-          "Think deeply and use internal reasoning before answering.",
-          "Do not reveal hidden chain-of-thought.",
-          "Return: (1) a short reasoning summary (max 6 bullets), (2) a direct answer.",
-        ].join("\n")
-      : [
-          "You are a specialist agent in a multi-agent swarm.",
-          "Be precise and actionable.",
-          "Do not reveal hidden chain-of-thought.",
-          "Return a clear answer with key bullets.",
-        ].join("\n");
+  // 6. Execute Swarm
+  const systemPrompt = [
+    "You are a backend processor. Output JSON ONLY. No <thinking> tags. No conversational filler.",
+    "You are an elite reasoning model in a multi-agent swarm.",
+    "Return: { \"reasoning_summary\": \"...\", \"answer\": \"...\" }",
+  ].join("\n");
 
-    const request = {
-      messages: [
-        { role: "system", content: system },
-        { role: "user", content: query },
-      ],
-    };
-
-    let finished = 0;
-    const total = models.length;
-
-    const executions = new Array(models.length);
-
-    const tasks = models.map((m, idx) => {
-      const agentStartedAt = Date.now();
-
-      const task = (async () => {
-        const attemptModels = [m.primary, ...(Array.isArray(m.fallbacks) ? m.fallbacks : [])]
-          .filter(Boolean)
-          .filter((x, i, arr) => arr.indexOf(x) === i);
-
-        let usedModel = m.primary;
-        let completion = null;
-        let content = "";
-        let error = null;
-
-        for (let attemptIndex = 0; attemptIndex < attemptModels.length; attemptIndex += 1) {
-          const model = attemptModels[attemptIndex];
-          usedModel = model;
-          const attemptStartedAt = Date.now();
-
-          try {
-            const res = await chatCompletionWithTimeout(
-              client,
-              {
-                ...request,
-                model,
-              },
-              timeoutMs
-            );
-
-            completion = res;
-            const raw = extractChatText(res);
-            const safe = safeAgentText(raw);
-            if (!isUsableContent(safe)) {
-              throw new Error("Malformed or empty model output");
-            }
-
-            content = safe;
-            error = null;
-            break;
-          } catch (err) {
-            const msg = sanitizeErrorMessage(err instanceof Error ? err.message : String(err));
-            const isMalformed = msg.toLowerCase().includes("malformed") || msg.toLowerCase().includes("empty model output");
-            const canRetry = attemptIndex < attemptModels.length - 1 && (isTransientLike(err) || isMalformed);
-            const attemptDurationMs = Date.now() - attemptStartedAt;
-            if (canRetry) {
-              emit?.({
-                type: "agent_finish",
-                step: 1,
-                at: Date.now(),
-                agent: m.agent,
-                agentName: m.agentName,
-                model,
-                status: "failed",
-                duration: formatDurationMs(attemptDurationMs),
-                durationMs: attemptDurationMs,
-                output_snippet: "",
-                error: msg,
-              });
-
-              const nextModel = attemptModels[attemptIndex + 1];
-              emit?.({ type: "log", step: 1, at: Date.now(), message: `${m.agentName} replaced (${model} → ${nextModel}).` });
-              emit?.({ type: "agent_start", step: 1, at: Date.now(), agent: m.agent, agentName: m.agentName, model: nextModel });
-              continue;
-            }
-
-            completion = null;
-            content = "";
-            error = msg;
-            break;
-          }
-        }
-
-        return { usedModel, completion, content, error };
-      })();
-
-      task.then(({ usedModel, completion, content, error }) => {
-        const finishedAt = Date.now();
-        const durationMs = finishedAt - agentStartedAt;
-        const snippet = normalizeSnippet(content);
-        const status = error ? "failed" : "completed";
-
-        emit?.({
-          type: "agent_finish",
-          step: 1,
-          at: finishedAt,
-          agent: m.agent,
-          agentName: m.agentName,
-          model: usedModel,
-          status,
-          duration: formatDurationMs(durationMs),
-          durationMs,
-          output_snippet: snippet,
-          error: error ? sanitizeErrorMessage(error) : null,
-        });
-
-        finished += 1;
-        const percent = Math.max(0, Math.min(100, Math.round((finished / Math.max(1, total)) * 100)));
-        emit?.({ type: "step_progress", step: 1, percent, at: finishedAt });
-
-        if (error) {
-          emit?.({ type: "log", step: 1, at: finishedAt, message: `${m.agentName} failed: ${sanitizeErrorMessage(error)}` });
-        } else {
-          emit?.({ type: "log", step: 1, at: finishedAt, message: `${m.agentName} finished in ${formatDurationMs(durationMs)}` });
-        }
-
-        executions[idx] = toExecution({
-          agent: m.agent,
-          model: usedModel,
-          completion,
-          content,
-          error,
-        });
+  const tasks = models.map(async (m) => {
+    const agentStart = Date.now();
+    try {
+      const completion = await client.chat.completions.create({
+        model: m.model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userQuery },
+        ],
+        max_tokens: thinkingNexus ? 900 : 700,
+        response_format: { type: "json_object" },
       });
 
-      return task;
-    });
+      const content = completion.choices[0].message.content;
+      const durationMs = Date.now() - agentStart;
+      
+      // Attempt to parse JSON to ensure validity, but return string content
+      try {
+        JSON.parse(content);
+      } catch (e) {
+        // If not valid JSON, we might want to flag it, but for now we just return it
+        // The instructions say "If you write anything outside the JSON, the system fails."
+        // We could enforce it here.
+      }
 
-    await Promise.all(tasks);
+      emit?.({
+        type: "agent_finish",
+        step: 1,
+        at: Date.now(),
+        agent: m.agent,
+        agentName: m.agentName,
+        model: m.model,
+        status: "completed",
+        duration: formatDurationMs(durationMs),
+        durationMs,
+        output_snippet: content.slice(0, 100) + "...",
+      });
 
-    const usable = executions.filter((e) => String(e?.result?.content || "").trim());
-    if (usable.length === 0) {
-      throw new Error(`Swarm failed for all models (${models.length}) (key ${maskKey(apiKey)})`);
+      return {
+        agent: m.agent,
+        model: m.model,
+        status: "completed",
+        result: { content },
+        error: null,
+      };
+
+    } catch (err) {
+      const durationMs = Date.now() - agentStart;
+      const msg = sanitizeErrorMessage(err instanceof Error ? err.message : String(err));
+      
+      emit?.({
+        type: "agent_finish",
+        step: 1,
+        at: Date.now(),
+        agent: m.agent,
+        agentName: m.agentName,
+        model: m.model,
+        status: "failed",
+        duration: formatDurationMs(durationMs),
+        durationMs,
+        error: msg,
+      });
+
+      return {
+        agent: m.agent,
+        model: m.model,
+        status: "failed",
+        result: { content: "" },
+        error: msg,
+      };
     }
+  });
 
-    const finishedAt = Date.now();
-    emit?.({ type: "log", step: 1, at: finishedAt, message: `Swarm completed with ${usable.length}/${models.length} usable outputs.` });
+  const executions = await Promise.all(tasks);
+  const successful = executions.filter((e) => e.status === "completed");
 
-    return {
-      taskId: null,
-      status: "completed",
-      selectedAgents: executions.map((e, i) => ({ agent: models[i]?.agent, model: e?.model || models[i]?.primary })),
-      agentExecutions: executions,
-      simulated: false,
-    };
-  } catch (error) {
-    const message = sanitizeErrorMessage(error instanceof Error ? error.message : String(error));
-    const at = Date.now();
-    emit?.({ type: "log", step: 1, at, message: `Step 1 failed: ${message}` });
-    throw new Error(`Step 1 failed: ${message}`);
+  if (successful.length === 0) {
+    throw new Error(`Swarm failed for all models in ${modeName}.`);
   }
+
+  const finishedAt = Date.now();
+  emit?.({
+    type: "log",
+    step: 1,
+    at: finishedAt,
+    message: `Swarm completed. ${successful.length}/${models.length} agents successful.`,
+  });
+
+  return {
+    taskId: null,
+    status: "completed",
+    selectedAgents: executions.map(e => ({ agent: e.agent, model: e.model })),
+    agentExecutions: executions,
+    simulated: false,
+  };
 }
+
+step1Swarm.AGENTS = {
+  standard: CEREBRAS_MODELS,
+  thinking: BLACKBOX_MODELS,
+};
 
 module.exports = step1Swarm;

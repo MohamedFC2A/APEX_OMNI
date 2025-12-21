@@ -7,18 +7,18 @@ import { HoloPipeline } from "@/components/HoloPipeline";
 import { useNexusStore } from "@/state/nexusStore";
 import { useShallow } from "zustand/react/shallow";
 
-const STANDARD_AGENTS = [
+type AgentMeta = { agent: string; agentName: string; model: string };
+
+const FALLBACK_STANDARD_AGENTS: AgentMeta[] = [
   { agent: "cerebras_llama_70b", agentName: "Cerebras Llama 3.3 70B", model: "llama-3.3-70b" },
   { agent: "cerebras_llama_8b", agentName: "Cerebras Llama 3.1 8B", model: "llama3.1-8b" },
-  { agent: "cerebras_gpt_oss_120b", agentName: "Cerebras GPT-OSS 120B", model: "gpt-oss-120b" },
+  { agent: "cerebras_llama_70b_backup", agentName: "Cerebras Llama 3.3 70B (Backup)", model: "llama-3.3-70b" },
 ];
 
-const THINKING_NEXUS_AGENTS = [
-  { agent: "deepseek_v3", agentName: "DeepSeek V3", model: "deepseek/deepseek-chat" },
-  { agent: "hermes_405b", agentName: "Hermes 3 405B", model: "nousresearch/hermes-3-llama-3.1-405b" },
-  { agent: "llama_70b_instruct", agentName: "Llama 3.3 70B Instruct", model: "meta-llama/llama-3.3-70b-instruct" },
-  { agent: "gpt_4o", agentName: "GPT-4o", model: "openai/gpt-4o" },
-  { agent: "claude_haiku", agentName: "Claude 3 Haiku", model: "anthropic/claude-3-haiku" },
+const FALLBACK_THINKING_NEXUS_AGENTS: AgentMeta[] = [
+  { agent: "deepseek_v3", agentName: "DeepSeek V3", model: "blackboxai/deepseek/deepseek-chat" },
+  { agent: "gpt_4o", agentName: "GPT-4o", model: "blackboxai/openai/gpt-4o" },
+  { agent: "claude_sonnet", agentName: "Claude 3.5 Sonnet", model: "blackboxai/anthropic/claude-3-5-sonnet" },
 ];
 
 function AnimatedLogLine({ line }: { line: string }) {
@@ -366,6 +366,10 @@ export function NexusChat() {
   const [showTooltip, setShowTooltip] = useState(false);
   const [typingEnabled, setTypingEnabled] = useState(true);
   const [thinkingNexus, setThinkingNexus] = useState(false);
+  const [agentMeta, setAgentMeta] = useState<{ standard: AgentMeta[]; thinking: AgentMeta[] }>(() => ({
+    standard: FALLBACK_STANDARD_AGENTS,
+    thinking: FALLBACK_THINKING_NEXUS_AGENTS,
+  }));
   const esRef = useRef<EventSource | null>(null);
   const lastCompletedStepRef = useRef<number>(0);
   const logRef = useRef<HTMLDivElement | null>(null);
@@ -382,6 +386,26 @@ export function NexusChat() {
     return () => {
       esRef.current?.close();
       esRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const resp = await fetch("/api/nexus/meta", { method: "GET" });
+        if (!resp.ok) return;
+        const json = (await resp.json()) as { standardAgents?: AgentMeta[]; thinkingAgents?: AgentMeta[] };
+        if (cancelled) return;
+        const standard = Array.isArray(json.standardAgents) ? json.standardAgents : FALLBACK_STANDARD_AGENTS;
+        const thinking = Array.isArray(json.thinkingAgents) ? json.thinkingAgents : FALLBACK_THINKING_NEXUS_AGENTS;
+        setAgentMeta({ standard, thinking });
+      } catch {
+        if (cancelled) return;
+      }
+    })();
+    return () => {
+      cancelled = true;
     };
   }, []);
 
@@ -408,7 +432,8 @@ export function NexusChat() {
     setTypingEnabled(true);
     setInput("");
 
-    const nextAgents = (thinkingNexus ? THINKING_NEXUS_AGENTS : STANDARD_AGENTS).map((a) => ({
+    const metaList = thinkingNexus ? agentMeta.thinking : agentMeta.standard;
+    const nextAgents = metaList.map((a) => ({
       agent: a.agent,
       agentName: a.agentName,
       model: a.model,
@@ -610,7 +635,7 @@ export function NexusChat() {
                   : "border-cyan-400/25 bg-cyan-500/10 text-cyan-100/80 shadow-[0_0_18px_rgba(34,211,238,0.18)] hover:bg-cyan-500/15")
               }
             >
-              ACTIVATE THINKING NEXUS
+              ACTIVATE DEEP SCAN
             </button>
           </div>
         </div>
@@ -624,7 +649,7 @@ export function NexusChat() {
             <div className="rounded-3xl border border-white/10 bg-black/35 p-5 backdrop-blur-xl">
               <div className="flex flex-wrap items-center justify-between gap-4">
                 <div className="text-xs tracking-[0.28em] text-white/60">COMMAND INPUT</div>
-                <div className="text-xs text-white/40">{thinkingNexus ? "Thinking Nexus: ON" : "Standard Mode"}</div>
+                <div className="text-xs text-white/40">{thinkingNexus ? "Deep Scan: ON" : "Standard Mode"}</div>
               </div>
               <div className="mt-4">
                 <motion.div

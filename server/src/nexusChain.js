@@ -9,6 +9,15 @@ const step8Format = require("../../nexus_ops/step8_format");
 const step9Guard = require("../../nexus_ops/step9_guard");
 const step10Truth = require("../../nexus_ops/step10_truth");
 
+function redactSecrets(input) {
+  return String(input || "")
+    .replace(/\b(bb_[a-zA-Z0-9_\-]{10,})\b/g, "[REDACTED]")
+    .replace(/\b(sk-[a-zA-Z0-9_\-]{10,})\b/g, "[REDACTED]")
+    .replace(/\b(csk-[a-zA-Z0-9_\-]{10,})\b/g, "[REDACTED]")
+    .replace(/BLACKBOX_API_KEY\s*=\s*[^\n]+/gi, "BLACKBOX_API_KEY=[REDACTED]")
+    .replace(/CEREBRAS_API_KEY\s*=\s*[^\n]+/gi, "CEREBRAS_API_KEY=[REDACTED]");
+}
+
 const steps = [
   {
     id: 1,
@@ -144,10 +153,26 @@ async function runNexusChain({ userQuery, emit, thinkingNexus } = {}) {
     });
   }
 
+  const rawAnswer =
+    typeof ctx.presentation?.answer === "string"
+      ? ctx.presentation.answer
+      : typeof ctx.formatted === "string"
+        ? ctx.formatted
+        : typeof ctx.refined === "string"
+          ? ctx.refined
+          : typeof ctx.verified === "string"
+            ? ctx.verified
+            : typeof ctx.draft === "string"
+              ? ctx.draft
+              : "";
+
+  const safeAnswer = redactSecrets(rawAnswer);
+  const guardSafe = typeof ctx.guard?.safeOutput === "string" ? ctx.guard.safeOutput : "";
+
   return {
     startedAt,
     finishedAt: Date.now(),
-    answer: ctx.presentation?.answer ?? ctx.formatted ?? ctx.refined ?? ctx.verified ?? ctx.draft,
+    answer: safeAnswer.trim() ? safeAnswer : guardSafe,
     steps: {
       swarm: ctx.swarm,
       facts: ctx.facts,

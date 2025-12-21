@@ -1,8 +1,9 @@
-require("dotenv").config({ path: require("path").join(__dirname, "..", "..", ".env") });
+require("dotenv").config({ path: require("path").join(__dirname, "..", "..", ".env"), override: true });
 
 const express = require("express");
 const cors = require("cors");
 const { runNexusChain } = require("./nexusChain");
+const step1Swarm = require("../../nexus_ops/step1_swarm");
 
 function parseBool(value) {
   const v = String(value || "").trim().toLowerCase();
@@ -40,6 +41,15 @@ app.post("/api/nexus/run", async (req, res) => {
       error: redactSecrets(error instanceof Error ? error.message : "Unknown error"),
     });
   }
+});
+
+app.get("/api/nexus/meta", (_req, res) => {
+  const standardAgents = Array.isArray(step1Swarm?.AGENTS?.standard) ? step1Swarm.AGENTS.standard : [];
+  const thinkingAgents = Array.isArray(step1Swarm?.AGENTS?.thinking) ? step1Swarm.AGENTS.thinking : [];
+  res.status(200).json({
+    standardAgents,
+    thinkingAgents,
+  });
 });
 
 app.get("/api/nexus/stream", async (req, res) => {

@@ -1,4 +1,4 @@
-require("dotenv").config({ path: require("path").join(__dirname, "..", ".env") });
+require("dotenv").config({ path: require("path").join(__dirname, "..", ".env"), override: true });
 
 const key = process.env.BLACKBOX_API_KEY || "";
 
@@ -10,4 +10,3 @@ function maskKey(value) {
 
 console.log(`API Key Loaded: ${maskKey(key)}`);
 console.log("Ready to launch");
-
