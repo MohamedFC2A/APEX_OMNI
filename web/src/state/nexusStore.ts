@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { persist, createJSONStorage } from "zustand/middleware";
 import {
   ChatSession,
   ChatMessage,
@@ -8,8 +9,6 @@ import {
   generateSessionTitle,
 } from "@/types/chat";
 import {
-  loadSessions,
-  saveSessions,
   upsertSession,
   deleteSessionById,
   newSession as createNewSession,
@@ -67,6 +66,7 @@ type NexusState = {
   activeSessionId: string;
   contextWindow: number;
   storageInitialized: boolean;
+  _hasHydrated: boolean;
   reset: () => void;
   setConnection: (connection: NexusConnectionStatus) => void;
   setError: (message: string) => void;
@@ -135,7 +135,9 @@ function shallowEqualStringArray(a: string[], b: string[]): boolean {
 // ============================================================================
 // STORE
 // ============================================================================
-export const useNexusStore = create<NexusState>((set, get) => ({
+export const useNexusStore = create<NexusState>()(
+  persist(
+    (set, get) => ({
   steps: cloneDefaultSteps(),
   agents: [],
   liveLog: [],
@@ -147,8 +149,9 @@ export const useNexusStore = create<NexusState>((set, get) => ({
   typingIntervalMs: 22,
   sessions: {},
   activeSessionId: "",
-  contextWindow: 20,
+  contextWindow: 10,
   storageInitialized: false,
+  _hasHydrated: false,
   reset: () => set({
     steps: cloneDefaultSteps(),
     agents: [],
@@ -219,35 +222,18 @@ export const useNexusStore = create<NexusState>((set, get) => ({
   })),
   appendLiveLog: (line) => set((state) => ({ liveLog: [...state.liveLog, line].slice(-220) })),
   initFromStorage: () => {
-    if (typeof window === "undefined") return;
+    // Persist middleware handles hydration automatically
+    // This function is kept for backward compatibility but is now a no-op
     const state = get();
-    if (state.storageInitialized) return;
-    try {
-      const sessions = loadSessions();
-      const sessionList = Object.values(sessions || {});
-      let activeSessionId = "";
-      let finalSessions = sessions || {};
-      if (sessionList.length === 0) {
-        const first = createNewSession();
-        finalSessions = { [first.id]: first };
-        activeSessionId = first.id;
-        saveSessions(finalSessions);
-      } else {
-        sessionList.sort((a, b) => (b?.updatedAt ?? 0) - (a?.updatedAt ?? 0));
-        activeSessionId = sessionList[0]?.id ?? "";
-      }
-      set({ sessions: finalSessions, activeSessionId, storageInitialized: true });
-    } catch (e) {
-      console.error("[nexusStore] Failed to load sessions from storage:", e);
-      const first = createNewSession();
-      set({ sessions: { [first.id]: first }, activeSessionId: first.id, storageInitialized: true });
+    if (!state.storageInitialized && state.sessions && Object.keys(state.sessions).length > 0) {
+      set({ storageInitialized: true });
     }
   },
   newChat: () => {
     const state = get();
     const session = createNewSession();
     const nextSessions = upsertSession(state.sessions, session);
-    saveSessions(nextSessions);
+    // Persist middleware will automatically save
     set({
       sessions: nextSessions,
       activeSessionId: session.id,
@@ -279,7 +265,7 @@ export const useNexusStore = create<NexusState>((set, get) => ({
   deleteSession: (sessionId) => {
     const state = get();
     const nextSessions = deleteSessionById(state.sessions, sessionId);
-    saveSessions(nextSessions);
+    // Persist middleware will automatically save
     let nextActiveId = state.activeSessionId;
     if (sessionId === state.activeSessionId) {
       const remaining = Object.values(nextSessions);
@@ -287,7 +273,6 @@ export const useNexusStore = create<NexusState>((set, get) => ({
         const newSess = createNewSession();
         nextSessions[newSess.id] = newSess;
         nextActiveId = newSess.id;
-        saveSessions(nextSessions);
       } else {
         remaining.sort((a, b) => (b?.updatedAt ?? 0) - (a?.updatedAt ?? 0));
         nextActiveId = remaining[0]?.id ?? "";
@@ -303,7 +288,7 @@ export const useNexusStore = create<NexusState>((set, get) => ({
     const updatedMessages = [...session.messages, message];
     const updatedSession: ChatSession = { ...session, messages: updatedMessages, title: session.messages.length === 0 ? generateSessionTitle(updatedMessages) : session.title, updatedAt: Date.now() };
     const nextSessions = upsertSession(state.sessions, updatedSession);
-    saveSessions(nextSessions);
+    // Persist middleware will automatically save
     set({ sessions: nextSessions });
   },
   getActiveSession: () => {
@@ -318,6 +303,70 @@ export const useNexusStore = create<NexusState>((set, get) => ({
     if (messages.length <= state.contextWindow) return messages;
     return messages.slice(-state.contextWindow);
   },
-}));
+    }),
+    {
+      name: "nexus-chat-v1",
+      storage: createJSONStorage(() => {
+        if (typeof window !== "undefined") {
+          return localStorage;
+        }
+        // SSR fallback - return a no-op storage
+        return {
+          getItem: () => null,
+          setItem: () => {},
+          removeItem: () => {},
+        };
+      }),
+      partialize: (state) => ({
+        sessions: state.sessions,
+        activeSessionId: state.activeSessionId,
+        contextWindow: state.contextWindow,
+        storageInitialized: state.storageInitialized,
+      }),
+      onRehydrateStorage: () => {
+        return (state, error) => {
+          if (error) {
+            console.error("[nexusStore] Rehydration error:", error);
+            return;
+          }
+          if (!state) return;
+          
+          // Migration: Import old nexus:v5:sessions if exists
+          if (typeof window !== "undefined") {
+            try {
+              const oldData = window.localStorage.getItem("nexus:v5:sessions");
+              if (oldData && (!state.sessions || Object.keys(state.sessions).length === 0)) {
+                const parsed = JSON.parse(oldData) as Record<string, ChatSession>;
+                if (parsed && typeof parsed === "object") {
+                  state.sessions = parsed;
+                  const sessionList = Object.values(parsed);
+                  if (sessionList.length > 0) {
+                    sessionList.sort((a, b) => (b?.updatedAt ?? 0) - (a?.updatedAt ?? 0));
+                    state.activeSessionId = sessionList[0]?.id ?? "";
+                  }
+                  // Clean up old storage
+                  window.localStorage.removeItem("nexus:v5:sessions");
+                }
+              }
+            } catch (e) {
+              console.error("[nexusStore] Migration error:", e);
+            }
+          }
+          
+          // Initialize first session if none exist
+          if (!state.sessions || Object.keys(state.sessions).length === 0) {
+            const first = createNewSession();
+            state.sessions = { [first.id]: first };
+            state.activeSessionId = first.id;
+            state.storageInitialized = true;
+          } else {
+            state.storageInitialized = true;
+          }
+          state._hasHydrated = true;
+        };
+      },
+    }
+  )
+);
 
 export type { ChatSession, ChatMessage, ChatRole, NexusMode };

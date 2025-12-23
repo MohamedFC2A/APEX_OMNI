@@ -118,7 +118,7 @@ export function HistorySidebar({ isOpen, onClose, onNewChat }: HistorySidebarPro
             {/* Header */}
             <div className="flex items-center justify-between border-b border-white/10 p-4">
               <h2 className="text-sm font-semibold tracking-wide text-white/90">
-                CHAT HISTORY
+                PAST CONVERSATIONS
               </h2>
               <div className="flex items-center gap-2">
                 <button

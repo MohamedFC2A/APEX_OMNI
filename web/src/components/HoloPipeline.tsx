@@ -189,9 +189,9 @@ const MobileActiveStepCard = React.memo(function MobileActiveStepCard({
 
   return (
     <div
-      className={
-        "relative overflow-hidden rounded-2xl border p-4 transition-all duration-200 transform-gpu " + rowClasses(step.status)
-      }
+            className={
+              "relative overflow-hidden rounded-2xl border p-4 transition-all duration-200 transform-gpu will-change-transform " + rowClasses(step.status)
+            }
     >
       <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(step.status)} />
 
@@ -287,7 +287,7 @@ const DesktopPipelineView = React.memo(function DesktopPipelineView({
 }) {
   return (
     <div
-      className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 p-5 backdrop-blur-xl"
+      className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 p-5 backdrop-blur-xl transform-gpu will-change-transform"
       style={{ transform: "perspective(1000px) rotateX(2deg)" }}
     >
       <div
@@ -307,7 +307,7 @@ const DesktopPipelineView = React.memo(function DesktopPipelineView({
           <div
             key={s.id}
             className={
-              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 " +
+              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 transform-gpu will-change-transform " +
               rowClasses(s.status)
             }
             style={{ transform: "perspective(1000px) rotateX(3deg)" }}

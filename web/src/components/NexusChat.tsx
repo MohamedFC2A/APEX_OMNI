@@ -24,9 +24,15 @@ const FALLBACK_SUPER_THINKING_AGENTS: AgentMeta[] = SUPER_THINKING_AGENTS;
 
 const AnimatedLogLine = React.memo(function AnimatedLogLine({ line }: { line: string }) {
   return (
-    <div className="whitespace-pre-wrap opacity-100">
+    <motion.div
+      initial={{ opacity: 0, y: 4 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -2 }}
+      transition={{ duration: 0.15, ease: "easeOut" }}
+      className="whitespace-pre-wrap"
+    >
       {line}
-    </div>
+    </motion.div>
   );
 });
 
@@ -451,6 +457,12 @@ export function NexusChat() {
   const logRef = useRef<HTMLDivElement | null>(null);
 
   const canSubmit = useMemo(() => isValidInput(input, mode), [input, mode]);
+  
+  // Liquid glow intensity based on input length
+  const glowIntensity = useMemo(() => {
+    const trimmed = input.trim();
+    return Math.min(1, trimmed.length / 240);
+  }, [input]);
 
   // Initialize storage on mount
   useEffect(() => {
@@ -731,7 +743,7 @@ export function NexusChat() {
         <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.06),transparent_18%,transparent_82%,rgba(255,255,255,0.05))]" />
       </div>
 
-      <div className="relative mx-auto w-[96%] sm:w-full max-w-7xl px-2 sm:px-6 py-4 sm:py-10">
+      <div className="relative mx-auto w-[95%] sm:w-full max-w-7xl px-2 sm:px-6 py-4 sm:py-10">
         <div className="flex flex-wrap items-start justify-between gap-6 border-b border-white/5 pb-6">
           <div>
             <div className="text-xs tracking-[0.28em] text-white/60">APEX OMNI</div>
@@ -809,18 +821,22 @@ export function NexusChat() {
                     placeholder={
                       mode === "super_thinking"
                         ? "Enter a detailed prompt (50+ chars required for Super Coder)..."
-                        : "Issue your directive... (Enter to send)"
+                        : "Issue your directive..."
                     }
                     rows={3}
                     className="w-full resize-none bg-transparent text-sm leading-6 text-white/90 outline-none placeholder:text-white/30"
                   />
                   
-                  {/* Helper text for Super Coder mode */}
-                  {mode === "super_thinking" && input.trim().length < MIN_LENGTH_SUPER_CODER && input.trim().length > 0 && (
-                    <div className="mt-2 text-[11px] text-amber-300/80">
-                      💡 Detailed prompt required for Super Coder mode ({input.trim().length}/{MIN_LENGTH_SUPER_CODER} chars)
-                    </div>
-                  )}
+                  {/* Helper text */}
+                  <div className="mt-2 flex items-center gap-2 text-[10px] text-white/40">
+                    {mode === "super_thinking" && input.trim().length < MIN_LENGTH_SUPER_CODER && input.trim().length > 0 ? (
+                      <span className="text-amber-300/80">
+                        💡 Detailed prompt required ({input.trim().length}/{MIN_LENGTH_SUPER_CODER} chars)
+                      </span>
+                    ) : (
+                      <span>Enter to send • Shift+Enter for new line</span>
+                    )}
+                  </div>
                   
                   {/* CONTROL HUB: Unified Mode + Complexity + Action */}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
@@ -868,11 +884,17 @@ export function NexusChat() {
                       disabled={!canSubmit || connection === "streaming" || connection === "connecting"}
                       animate={{
                         boxShadow: canSubmit || connection === "streaming" || connection === "connecting"
-                          ? [
-                              "0 0 20px rgba(16,185,129,0.5), 0 0 40px rgba(34,211,238,0.3)",
-                              "0 0 35px rgba(16,185,129,0.7), 0 0 70px rgba(34,211,238,0.4)",
-                              "0 0 20px rgba(16,185,129,0.5), 0 0 40px rgba(34,211,238,0.3)",
-                            ]
+                          ? connection === "streaming" || connection === "connecting"
+                            ? [
+                                "0 0 20px rgba(16,185,129,0.5), 0 0 40px rgba(34,211,238,0.3)",
+                                "0 0 35px rgba(16,185,129,0.7), 0 0 70px rgba(34,211,238,0.4)",
+                                "0 0 20px rgba(16,185,129,0.5), 0 0 40px rgba(34,211,238,0.3)",
+                              ]
+                            : [
+                                `0 0 ${20 + glowIntensity * 15}px rgba(16,185,129,${0.4 + glowIntensity * 0.3}), 0 0 ${40 + glowIntensity * 30}px rgba(34,211,238,${0.2 + glowIntensity * 0.2})`,
+                                `0 0 ${25 + glowIntensity * 20}px rgba(16,185,129,${0.6 + glowIntensity * 0.3}), 0 0 ${50 + glowIntensity * 40}px rgba(34,211,238,${0.3 + glowIntensity * 0.2})`,
+                                `0 0 ${20 + glowIntensity * 15}px rgba(16,185,129,${0.4 + glowIntensity * 0.3}), 0 0 ${40 + glowIntensity * 30}px rgba(34,211,238,${0.2 + glowIntensity * 0.2})`,
+                              ]
                           : "0 0 0 transparent",
                       }}
                       transition={{
@@ -978,9 +1000,18 @@ export function NexusChat() {
                   </div>
                 </div>
 
-                {/* Plan Content - Terminal Style */}
-                <div className="relative max-h-72 overflow-auto p-4 sm:p-5">
-                  <div className="font-mono text-[11px] sm:text-xs leading-relaxed text-emerald-100/70 whitespace-pre-wrap">
+                {/* Plan Content - Terminal Style with Grid Paper */}
+                <div className="relative max-h-72 overflow-auto p-4 sm:p-5 transform-gpu will-change-contents">
+                  <div 
+                    className="relative font-mono text-[11px] sm:text-xs leading-relaxed text-emerald-100/70 whitespace-pre-wrap"
+                    style={{
+                      backgroundImage: `
+                        linear-gradient(rgba(16,185,129,0.08) 1px, transparent 1px),
+                        linear-gradient(90deg, rgba(16,185,129,0.08) 1px, transparent 1px)
+                      `,
+                      backgroundSize: "16px 16px",
+                    }}
+                  >
                     {/* Terminal prompt styling */}
                     <span className="text-emerald-500/60 select-none">❯ </span>
                     {thinkingStream}
@@ -1000,7 +1031,7 @@ export function NexusChat() {
             )}
 
             {/* FINAL OUTPUT - Wide on mobile */}
-            <div className="nexus-panel rounded-2xl sm:rounded-3xl p-3 sm:p-5 lg:p-6 will-change-contents w-full">
+            <div className="nexus-panel rounded-2xl sm:rounded-3xl p-3 sm:p-5 lg:p-6 will-change-contents transform-gpu w-full">
               <div className="flex items-center justify-between gap-4 border-b border-white/5 pb-3 sm:pb-4">
                 <div className="text-[10px] sm:text-xs tracking-[0.2em] sm:tracking-[0.28em] text-white/60">FINAL OUTPUT</div>
                 <div className="text-[10px] sm:text-xs text-white/40">Markdown</div>
@@ -1017,11 +1048,13 @@ export function NexusChat() {
               </div>
               <div
                 ref={logRef}
-                className="mt-3 h-56 overflow-auto rounded-2xl border border-white/10 bg-black/60 px-4 py-3 font-mono text-[11px] leading-5 text-white/70"
+                className="mt-3 h-56 overflow-auto rounded-2xl border border-white/10 bg-black/60 px-4 py-3 font-mono text-[11px] leading-5 text-white/70 transform-gpu will-change-contents"
               >
-                {liveLog.map((line, i) => (
-                  <AnimatedLogLine key={i} line={line} />
-                ))}
+                <AnimatePresence mode="popLayout">
+                  {liveLog.map((line, i) => (
+                    <AnimatedLogLine key={`${i}-${line.substring(0, 20)}`} line={line} />
+                  ))}
+                </AnimatePresence>
               </div>
             </div>
           </div>

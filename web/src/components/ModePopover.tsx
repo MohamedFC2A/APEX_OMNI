@@ -20,7 +20,7 @@ const MODES: ModeOption[] = [
     value: "standard",
     icon: "⚡",
     label: "STANDARD",
-    sublabel: "DeepSeek-V3.2",
+    sublabel: "DeepSeek-V3.2 (Fast)",
     description: "Instant responses for quick tasks",
     accentColor: "cyan",
   },
@@ -28,7 +28,7 @@ const MODES: ModeOption[] = [
     value: "thinking",
     icon: "🧠",
     label: "NEXUS THINKING PRO",
-    sublabel: "DeepSeek-V3.2 Thinking",
+    sublabel: "DeepSeek-V3.2 (Reasoning)",
     description: "Displays intermediate thoughts",
     accentColor: "purple",
   },
@@ -36,7 +36,7 @@ const MODES: ModeOption[] = [
     value: "super_thinking",
     icon: "⚛️",
     label: "NEXUS_PRO_1",
-    sublabel: "DeepSeek-V3.2 Thinking",
+    sublabel: "DeepSeek-V3.2 (Coding Master)",
     description: "Full system-wide logic & code",
     accentColor: "emerald",
   },
@@ -188,7 +188,7 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
             initial={{ opacity: 0, y: -10, scale: 0.95 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -10, scale: 0.95 }}
-            transition={{ duration: 0.2, ease: "easeOut" }}
+            transition={{ type: "spring", damping: 20, stiffness: 240 }}
             style={{
               position: "fixed",
               top: pos.top,
@@ -196,7 +196,7 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
               width: 300,
               zIndex: 999999,
             }}
-            className="overflow-hidden rounded-2xl border border-white/10 bg-black/90 shadow-2xl shadow-black/50 backdrop-blur-xl"
+            className="overflow-hidden rounded-2xl border border-cyan-500/20 bg-black/80 shadow-2xl shadow-black/50 backdrop-blur-xl"
           >
             {/* Header */}
             <div className="border-b border-white/5 bg-white/[0.02] px-4 py-3">
