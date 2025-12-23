@@ -3,11 +3,23 @@ require("dotenv").config({ path: require("path").join(__dirname, "..", "..", ".e
 const express = require("express");
 const cors = require("cors");
 const { runNexusChain } = require("./nexusChain");
-const step1Swarm = require("../../nexus_ops/step1_swarm");
+
+// Import AGENTS from compiled dist
+const nexusOps = require("../../nexus_ops/dist/index");
+const AGENTS = nexusOps.AGENTS || {};
 
 function parseBool(value) {
   const v = String(value || "").trim().toLowerCase();
   return v === "1" || v === "true" || v === "yes" || v === "on";
+}
+
+function normalizeMode(mode, thinkingNexus) {
+  const m = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  if (m === "standard" || m === "deep" || m === "coder") return m;
+  if (m === "thinking") return "deep";
+  if (m === "deep-scan" || m === "deepscan" || m === "deep_scan") return "deep";
+  if (m === "coder-mode" || m === "coder_mode" || m === "code") return "coder";
+  return thinkingNexus ? "deep" : "standard";
 }
 
 function redactSecrets(input) {
@@ -28,13 +40,14 @@ app.get("/health", (_req, res) => {
 app.post("/api/nexus/run", async (req, res) => {
   const userQuery = typeof req.body?.query === "string" ? req.body.query : "";
   const thinkingNexus = parseBool(req.body?.thinkingNexus);
+  const mode = normalizeMode(req.body?.mode, thinkingNexus);
   if (!userQuery.trim()) {
     res.status(400).json({ error: "Missing 'query'" });
     return;
   }
 
   try {
-    const result = await runNexusChain({ userQuery, thinkingNexus });
+    const result = await runNexusChain({ userQuery, thinkingNexus, mode });
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({
@@ -44,17 +57,22 @@ app.post("/api/nexus/run", async (req, res) => {
 });
 
 app.get("/api/nexus/meta", (_req, res) => {
-  const standardAgents = Array.isArray(step1Swarm?.AGENTS?.standard) ? step1Swarm.AGENTS.standard : [];
-  const thinkingAgents = Array.isArray(step1Swarm?.AGENTS?.thinking) ? step1Swarm.AGENTS.thinking : [];
+  const standardAgents = Array.isArray(AGENTS?.standard) ? AGENTS.standard : [];
+  const deepAgents = Array.isArray(AGENTS?.deep) ? AGENTS.deep : [];
+  const thinkingAgents = Array.isArray(AGENTS?.thinking) ? AGENTS.thinking : deepAgents;
+  const coderAgents = Array.isArray(AGENTS?.coder) ? AGENTS.coder : [];
   res.status(200).json({
     standardAgents,
+    deepAgents,
     thinkingAgents,
+    coderAgents,
   });
 });
 
 app.get("/api/nexus/stream", async (req, res) => {
   const userQuery = typeof req.query?.query === "string" ? req.query.query : "";
   const thinkingNexus = parseBool(req.query?.thinkingNexus);
+  const mode = normalizeMode(req.query?.mode, thinkingNexus);
   if (!userQuery.trim()) {
     res.status(400).json({ error: "Missing 'query'" });
     return;
@@ -89,6 +107,7 @@ app.get("/api/nexus/stream", async (req, res) => {
     const result = await runNexusChain({
       userQuery,
       thinkingNexus,
+      mode,
       emit: (update) => {
         const type = typeof update?.type === "string" ? update.type : "log";
         sendEvent(type, update);

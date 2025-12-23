@@ -1,13 +1,23 @@
-const step1Swarm = require("../../nexus_ops/step1_swarm");
-const step2Deconstruct = require("../../nexus_ops/step2_deconstruct");
-const step3Logic = require("../../nexus_ops/step3_logic");
-const step4Critique = require("../../nexus_ops/step4_critique");
-const step5Synthesis = require("../../nexus_ops/step5_synthesis");
-const step6Verify = require("../../nexus_ops/step6_verify");
-const step7Refine = require("../../nexus_ops/step7_refine");
-const step8Format = require("../../nexus_ops/step8_format");
-const step9Guard = require("../../nexus_ops/step9_guard");
-const step10Truth = require("../../nexus_ops/step10_truth");
+// Import from compiled nexus_ops dist folder
+const step1Swarm = require("../../nexus_ops/dist/step1_swarm").default;
+const step2Deconstruct = require("../../nexus_ops/dist/step2_deconstruct").default;
+const step3Logic = require("../../nexus_ops/dist/step3_logic").default;
+const step4Critique = require("../../nexus_ops/dist/step4_critique").default;
+const step5Synthesis = require("../../nexus_ops/dist/step5_synthesis").default;
+const step6Verify = require("../../nexus_ops/dist/step6_verify").default;
+const step7Refine = require("../../nexus_ops/dist/step7_refine").default;
+const step8Format = require("../../nexus_ops/dist/step8_format").default;
+const step9Guard = require("../../nexus_ops/dist/step9_guard").default;
+const step10Truth = require("../../nexus_ops/dist/step10_truth").default;
+
+function normalizeMode(mode, thinkingNexus) {
+  const m = typeof mode === "string" ? mode.trim().toLowerCase() : "";
+  if (m === "standard" || m === "deep" || m === "coder") return m;
+  if (m === "thinking") return "deep";
+  if (m === "deep-scan" || m === "deepscan" || m === "deep_scan") return "deep";
+  if (m === "coder-mode" || m === "coder_mode" || m === "code") return "coder";
+  return thinkingNexus ? "deep" : "standard";
+}
 
 function redactSecrets(input) {
   return String(input || "")
@@ -23,7 +33,7 @@ const steps = [
     id: 1,
     name: "Swarm Gathering",
     run: async (ctx) => {
-      const swarm = await step1Swarm(ctx.userQuery, { emit: ctx.emit, thinkingNexus: ctx.thinkingNexus });
+      const swarm = await step1Swarm(ctx.userQuery, { emit: ctx.emit, thinkingNexus: ctx.thinkingNexus, mode: ctx.mode });
       return { ...ctx, swarm };
     },
   },
@@ -101,12 +111,14 @@ const steps = [
   },
 ];
 
-async function runNexusChain({ userQuery, emit, thinkingNexus } = {}) {
+async function runNexusChain({ userQuery, emit, thinkingNexus, mode } = {}) {
   const startedAt = Date.now();
+  const normalizedMode = normalizeMode(mode, thinkingNexus);
 
   let ctx = {
     userQuery,
-    thinkingNexus: Boolean(thinkingNexus),
+    mode: normalizedMode,
+    thinkingNexus: normalizedMode === "deep",
     emit,
     swarm: null,
     facts: [],
