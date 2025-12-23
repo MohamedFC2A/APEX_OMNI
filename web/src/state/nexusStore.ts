@@ -131,7 +131,11 @@ function cloneDefaultSteps(): NexusStep[] {
   return defaultSteps.map((s) => ({ ...s }));
 }
 
+<<<<<<< HEAD
 function shallowEqualStringArray(a: string[], b: string[]): boolean {
+=======
+function shallowEqualStringArray(a: string[], b: string[]) {
+>>>>>>> 23fb81c777f6c794958b1aa5da88a6d72667c7fd
   if (a === b) return true;
   if (!Array.isArray(a) || !Array.isArray(b)) return false;
   if (a.length !== b.length) return false;
@@ -141,12 +145,16 @@ function shallowEqualStringArray(a: string[], b: string[]): boolean {
   return true;
 }
 
+<<<<<<< HEAD
 // ============================================================================
 // STORE
 // ============================================================================
 
 export const useNexusStore = create<NexusState>((set, get) => ({
   // Pipeline state
+=======
+export const useNexusStore = create<NexusState>((set) => ({
+>>>>>>> 23fb81c777f6c794958b1aa5da88a6d72667c7fd
   steps: cloneDefaultSteps(),
   agents: [],
   liveLog: [],
@@ -176,6 +184,7 @@ export const useNexusStore = create<NexusState>((set, get) => ({
       typingChunks: [],
       typingIntervalMs: 22,
     }),
+<<<<<<< HEAD
 
   setConnection: (connection) =>
     set((state) => (state.connection === connection ? state : { connection })),
@@ -207,6 +216,20 @@ export const useNexusStore = create<NexusState>((set, get) => ({
       return { typingChunks: chunks, typingIntervalMs: nextInterval };
     }),
 
+=======
+  setConnection: (connection) => set((state) => (state.connection === connection ? state : { connection })),
+  setError: (message) =>
+    set((state) =>
+      state.connection === "error" && state.errorMessage === message ? state : { errorMessage: message, connection: "error" }
+    ),
+  setAnswer: (answer) => set((state) => (state.answer === answer ? state : { answer })),
+  setTypingChunks: (chunks, intervalMs) =>
+    set((state) => {
+      const nextInterval = typeof intervalMs === "number" ? intervalMs : 22;
+      if (state.typingIntervalMs === nextInterval && shallowEqualStringArray(state.typingChunks, chunks)) return state;
+      return { typingChunks: chunks, typingIntervalMs: nextInterval };
+    }),
+>>>>>>> 23fb81c777f6c794958b1aa5da88a6d72667c7fd
   markStepStarted: (stepId, at) =>
     set((state) => ({
       steps: state.steps.map((s) =>
@@ -278,9 +301,13 @@ export const useNexusStore = create<NexusState>((set, get) => ({
         };
       }),
     })),
+<<<<<<< HEAD
 
   setAgents: (agents) => set((state) => (state.agents === agents ? state : { agents })),
 
+=======
+  setAgents: (agents) => set((state) => (state.agents === agents ? state : { agents })),
+>>>>>>> 23fb81c777f6c794958b1aa5da88a6d72667c7fd
   markAgentStart: (agent, at) =>
     set((state) => ({
       agents: state.agents.map((a) =>
