@@ -81,6 +81,7 @@ Provide the JSON response:`;
       summaryData = JSON.parse(content) as SummaryResponse;
     } catch (parseError) {
       // Fallback if JSON parsing fails
+      console.warn("[summarize] JSON parsing failed, using fallback:", parseError);
       summaryData = {
         quickLook: content.substring(0, 200),
         keyTopics: [],
