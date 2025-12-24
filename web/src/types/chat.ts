@@ -15,6 +15,27 @@ export interface ChatMessageMeta {
     completedSteps: number;
   };
   reasoningContent?: string;
+  editedAt?: number;
+  isDeleted?: boolean;
+  replyTo?: string; // ID of message being replied to
+  attachments?: ChatAttachment[];
+  reactions?: ChatReaction[];
+}
+
+export interface ChatAttachment {
+  id: string;
+  type: "image" | "document" | "file";
+  url: string;
+  name: string;
+  size: number;
+  mimeType?: string;
+  thumbnailUrl?: string; // For images
+}
+
+export interface ChatReaction {
+  emoji: string;
+  userId?: string; // For multi-user support
+  count: number;
 }
 
 export interface ChatMessage {
@@ -31,6 +52,9 @@ export interface ChatSession {
   updatedAt: number; // Unix timestamp ms
   createdAt: number;
   messages: ChatMessage[];
+  tags?: string[];
+  summary?: string;
+  category?: string;
 }
 
 /**

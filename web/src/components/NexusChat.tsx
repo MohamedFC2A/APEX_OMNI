@@ -6,8 +6,17 @@ import { motion, AnimatePresence } from "framer-motion";
 import { HoloPipeline } from "@/components/HoloPipeline";
 import { ModePopover } from "@/components/ModePopover";
 import { HistorySidebar } from "@/components/HistorySidebar";
+import { ChatMessage } from "@/components/ChatMessage";
+import { TypingIndicator } from "@/components/TypingIndicator";
+import { FileUpload } from "@/components/FileUpload";
+import { ChatSearch } from "@/components/ChatSearch";
+import { SmartSuggestions } from "@/components/SmartSuggestions";
+import { LinkPreview } from "@/components/LinkPreview";
+import { ChatSummary } from "@/components/ChatSummary";
+import { hasUrls, extractUrls } from "@/lib/linkPreview";
 import { useNexusStore, type NexusMode } from "@/state/nexusStore";
 import { useShallow } from "zustand/react/shallow";
+import type { ChatAttachment } from "@/types/chat";
 
 // Check for reduced motion preference
 const prefersReducedMotion = typeof window !== "undefined"
@@ -22,19 +31,6 @@ const FALLBACK_STANDARD_AGENTS: AgentMeta[] = STANDARD_AGENTS;
 const FALLBACK_THINKING_AGENTS: AgentMeta[] = THINKING_AGENTS;
 const FALLBACK_SUPER_THINKING_AGENTS: AgentMeta[] = SUPER_THINKING_AGENTS;
 
-const AnimatedLogLine = React.memo(function AnimatedLogLine({ line }: { line: string }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -2 }}
-      transition={{ duration: 0.15, ease: "easeOut" }}
-      className="whitespace-pre-wrap"
-    >
-      {line}
-    </motion.div>
-  );
-});
 
 // Mode-based validation constants
 const MIN_LENGTH_SUPER_CODER = 50;
@@ -138,7 +134,7 @@ function renderInlineImpl(text: string): ReactNode[] {
   return parts;
 }
 
-const MarkdownView = React.memo(function MarkdownView({ markdown }: { markdown: string }) {
+export const MarkdownView = React.memo(function MarkdownView({ markdown }: { markdown: string }) {
   const [copiedIndex, setCopiedIndex] = useState<number | null>(null);
 
   const copyCode = async (code: string, index: number) => {
@@ -332,33 +328,36 @@ const MarkdownView = React.memo(function MarkdownView({ markdown }: { markdown: 
             </div>
           );
         }
-        // TABLE RENDERING - Glassmorphic style
+        // TABLE RENDERING - Enhanced Neon Glassmorphic style
         if (b.type === "table") {
           return (
-            <div key={idx} className="my-4 overflow-x-auto rounded-xl border border-cyan-400/20 bg-black/40 backdrop-blur-xl shadow-[0_0_30px_rgba(34,211,238,0.1)]">
-              <table className="min-w-full divide-y divide-white/10">
+            <div key={idx} className="my-6 overflow-x-auto rounded-2xl border-2 border-cyan-400/40 bg-black/60 backdrop-blur-xl shadow-[0_0_40px_rgba(34,211,238,0.25)] ring-1 ring-cyan-400/20">
+              <table className="min-w-full divide-y divide-cyan-400/20">
                 <thead>
-                  <tr className="bg-gradient-to-r from-cyan-500/10 to-fuchsia-500/10">
+                  <tr className="bg-gradient-to-r from-cyan-500/20 via-fuchsia-500/15 to-cyan-500/20 border-b-2 border-cyan-400/40">
                     {b.headers.map((header, hIdx) => (
                       <th
                         key={hIdx}
-                        className="px-4 py-3 text-left text-xs font-bold uppercase tracking-wider text-cyan-300 border-b border-cyan-400/20"
+                        className="px-5 py-4 text-left text-xs font-bold uppercase tracking-wider text-cyan-200 border-r border-cyan-400/30 last:border-r-0"
                       >
-                        {renderInlineImpl(header)}
+                        <span className="flex items-center gap-2">
+                          <span className="h-1 w-1 rounded-full bg-cyan-400 shadow-[0_0_6px_rgba(34,211,238,0.8)]" />
+                          {renderInlineImpl(header)}
+                        </span>
                       </th>
                     ))}
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-white/5">
+                <tbody className="divide-y divide-cyan-400/15">
                   {b.rows.map((row, rIdx) => (
                     <tr
                       key={rIdx}
-                      className="transition-colors hover:bg-white/5"
+                      className="transition-all duration-200 hover:bg-gradient-to-r hover:from-cyan-500/10 hover:to-fuchsia-500/5 hover:shadow-[0_0_20px_rgba(34,211,238,0.15)]"
                     >
                       {row.map((cell, cIdx) => (
                         <td
                           key={cIdx}
-                          className="px-4 py-2.5 text-sm text-white/80 whitespace-nowrap"
+                          className="px-5 py-3 text-sm text-white/85 whitespace-nowrap border-r border-cyan-400/10 last:border-r-0"
                         >
                           {renderInlineImpl(cell)}
                         </td>
@@ -384,10 +383,8 @@ export function NexusChat() {
   const {
     steps,
     agents,
-    liveLog,
     connection,
     errorMessage,
-    answer,
     thinkingStream,
     reset,
     setConnection,
@@ -404,19 +401,22 @@ export function NexusChat() {
     setAgents,
     markAgentStart,
     markAgentFinish,
-    appendLiveLog,
     // V5 Chat Session Actions
     initFromStorage,
     newChat,
     appendChatMessage,
+    editChatMessage,
+    deleteChatMessage,
+    setTyping,
+    setAITyping,
+    isAITyping,
+    getActiveSession,
     getMessagesForContext,
   } = useNexusStore(
     useShallow((s) => ({
       steps: s.steps,
       agents: s.agents,
-      liveLog: s.liveLog,
       connection: s.connection,
-      answer: s.answer,
       thinkingStream: s.thinkingStream,
       errorMessage: s.errorMessage,
       reset: s.reset,
@@ -434,11 +434,16 @@ export function NexusChat() {
       setAgents: s.setAgents,
       markAgentStart: s.markAgentStart,
       markAgentFinish: s.markAgentFinish,
-      appendLiveLog: s.appendLiveLog,
       // V5 Chat Session
       initFromStorage: s.initFromStorage,
       newChat: s.newChat,
       appendChatMessage: s.appendChatMessage,
+      editChatMessage: s.editChatMessage,
+      deleteChatMessage: s.deleteChatMessage,
+      setTyping: s.setTyping,
+      setAITyping: s.setAITyping,
+      isAITyping: s.isAITyping,
+      getActiveSession: s.getActiveSession,
       getMessagesForContext: s.getMessagesForContext,
     }))
   );
@@ -447,6 +452,11 @@ export function NexusChat() {
   const [showTooltip, setShowTooltip] = useState(false);
   const [mode, setMode] = useState<NexusMode>("standard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [replyToId, setReplyToId] = useState<string | null>(null);
+  const [mounted, setMounted] = useState(false);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const [agentMeta, setAgentMeta] = useState<{ standard: AgentMeta[]; thinking: AgentMeta[]; super_thinking: AgentMeta[] }>(() => ({
     standard: FALLBACK_STANDARD_AGENTS,
     thinking: FALLBACK_THINKING_AGENTS,
@@ -454,7 +464,6 @@ export function NexusChat() {
   }));
   const abortRef = useRef<AbortController | null>(null);
   const lastCompletedStepRef = useRef<number>(0);
-  const logRef = useRef<HTMLDivElement | null>(null);
 
   const canSubmit = useMemo(() => isValidInput(input, mode), [input, mode]);
   
@@ -464,10 +473,43 @@ export function NexusChat() {
     return Math.min(1, trimmed.length / 240);
   }, [input]);
 
+  // Hydration guard - only access store after mount
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  // Get active session messages (only after mount to prevent hydration mismatch)
+  const activeSession = mounted ? getActiveSession() : null;
+  const messages = mounted && activeSession
+    ? activeSession.messages.filter((m) => !m.meta?.isDeleted)
+    : [];
+
   // Initialize storage on mount
   useEffect(() => {
     initFromStorage();
   }, [initFromStorage]);
+
+  // Scroll to bottom when new messages arrive
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+
+  // Typing detection
+  useEffect(() => {
+    if (!input.trim()) {
+      setTyping(false);
+      return;
+    }
+    const timer = setTimeout(() => {
+      setTyping(false);
+    }, 1000);
+    return () => clearTimeout(timer);
+  }, [input, setTyping]);
+
+  const handleInputChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setInput(e.target.value);
+    setTyping(true);
+  }, [setTyping]);
 
   // Cleanup on unmount
   useEffect(() => {
@@ -513,11 +555,6 @@ export function NexusChat() {
     };
   }, []);
 
-  useEffect(() => {
-    const el = logRef.current;
-    if (!el) return;
-    el.scrollTop = el.scrollHeight;
-  }, [liveLog.length]);
 
   // Toggle sidebar
   const toggleSidebar = useCallback(() => {
@@ -562,9 +599,31 @@ export function NexusChat() {
     reset();
     setInput("");
     setThinkingStream(""); // Clear thinking stream
+    setSelectedFiles([]);
+    setReplyToId(null);
+
+    // Handle file uploads if any
+    let attachments: ChatAttachment[] = [];
+    if (selectedFiles.length > 0) {
+      // For now, we'll create placeholder attachments
+      // In production, files should be uploaded to server first
+      attachments = selectedFiles.map((file) => ({
+        id: `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
+        type: file.type.startsWith("image/") ? "image" : file.type === "application/pdf" ? "document" : "file",
+        url: URL.createObjectURL(file), // Temporary local URL
+        name: file.name,
+        size: file.size,
+        mimeType: file.type,
+        thumbnailUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
+      }));
+    }
 
     // V5: Append user message to chat history (after getting context)
-    appendChatMessage("user", query, { mode });
+    appendChatMessage("user", query, { 
+      mode, 
+      attachments: attachments.length > 0 ? attachments : undefined,
+      replyTo: replyToId || undefined,
+    });
 
     const metaList = mode === "thinking" ? agentMeta.thinking : mode === "super_thinking" ? agentMeta.super_thinking : agentMeta.standard;
     const nextAgents = metaList.map((a) => ({
@@ -582,8 +641,31 @@ export function NexusChat() {
     setAgents(nextAgents);
     setConnection("connecting");
 
-    appendLiveLog(`> query: ${query}`);
-    appendLiveLog(`> context: ${historyForAPI.length} messages`);
+    // Convert images to base64 for API
+    const imageAttachments: Array<{ data: string; mimeType: string }> = [];
+    if (attachments.length > 0) {
+      for (const attachment of attachments) {
+        if (attachment.type === "image") {
+          // Find the corresponding File object
+          const file = selectedFiles.find(f => f.name === attachment.name);
+          if (file) {
+            const base64 = await new Promise<string>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                const result = reader.result as string;
+                resolve(result);
+              };
+              reader.onerror = reject;
+              reader.readAsDataURL(file);
+            });
+            imageAttachments.push({
+              data: base64,
+              mimeType: file.type,
+            });
+          }
+        }
+      }
+    }
 
     // Use POST with fetch for SSE (EventSource only supports GET)
     const abortController = new AbortController();
@@ -597,6 +679,7 @@ export function NexusChat() {
           query,
           mode,
           history: historyForAPI, // Send full history (user message in query param)
+          images: imageAttachments.length > 0 ? imageAttachments : undefined,
         }),
         signal: abortController.signal,
       });
@@ -611,7 +694,7 @@ export function NexusChat() {
       }
 
       setConnection("streaming");
-      appendLiveLog("> stream connected");
+      setAITyping(true);
 
       const reader = resp.body.getReader();
       const decoder = new TextDecoder();
@@ -644,7 +727,6 @@ export function NexusChat() {
               if (payload.step !== undefined && payload.status === undefined && payload.percent === undefined) {
                 // step_start
                 markStepStarted(payload.step, payload.at);
-                appendLiveLog(`> step ${payload.step} start`);
               } else if (payload.step !== undefined && payload.percent !== undefined) {
                 // step_progress
                 setStepProgress(payload.step, payload.percent, payload.at);
@@ -654,7 +736,6 @@ export function NexusChat() {
                   markStepError(payload.step, payload.at);
                   if (payload.message) {
                     appendStepLog(payload.step, payload.message);
-                    appendLiveLog(`> step ${payload.step} error: ${payload.message}`);
                   }
                 } else {
                   markStepCompleted(payload.step, payload.at);
@@ -662,12 +743,10 @@ export function NexusChat() {
                     lastCompletedStepRef.current = payload.step;
                     playStepTone(260 + payload.step * 22);
                   }
-                  appendLiveLog(`> step ${payload.step} done`);
                 }
               } else if (payload.agent !== undefined && payload.status === undefined) {
                 // agent_start
                 markAgentStart(payload.agent, payload.at);
-                appendLiveLog(`- ${payload.agentName} analyzing...`);
               } else if (payload.agent !== undefined && payload.status !== undefined) {
                 // agent_finish
                 markAgentFinish({
@@ -680,14 +759,6 @@ export function NexusChat() {
                   outputSnippet: typeof payload.output_snippet === "string" ? payload.output_snippet : "",
                   error: typeof payload.error === "string" ? payload.error : null,
                 });
-                if (payload.status === "failed") {
-                  appendLiveLog(`✗ ${payload.agentName} failed - ${payload.error || "Unknown error"}`);
-                } else {
-                  appendLiveLog(`✓ ${payload.agentName} completed (${payload.duration || "?"})`);
-                }
-              } else if (payload.message !== undefined) {
-                // log
-                appendLiveLog(payload.message);
               } else if (payload.content !== undefined) {
                 // chunk
                 fullAnswer += payload.content;
@@ -696,9 +767,6 @@ export function NexusChat() {
                 // thinking
                 fullReasoning += payload.chunk;
                 appendToThinking(payload.chunk);
-              } else if (payload.reason !== undefined) {
-                // finish
-                appendLiveLog(`> finish reason: ${payload.reason}`);
               } else if (payload.answer !== undefined) {
                 // done
                 if (payload.answer && !fullAnswer) {
@@ -706,16 +774,15 @@ export function NexusChat() {
                   fullAnswer = payload.answer;
                 }
                 setConnection("done");
-                appendLiveLog("> run completed");
-                if (payload.model) {
-                  appendLiveLog(`> model: ${payload.model}`);
-                }
-                // V5: Append assistant message to chat history
+                // V5: Append assistant message to chat history (merged with chat)
+                setAITyping(false);
                 appendChatMessage("assistant", fullAnswer, {
                   mode,
                   model: payload.model,
                   reasoningContent: fullReasoning || undefined,
                 });
+                // Clear answer state after adding to chat
+                setAnswer("");
               }
             } catch {
               // Ignore JSON parse errors for malformed SSE
@@ -725,11 +792,9 @@ export function NexusChat() {
       }
     } catch (err) {
       if ((err as Error).name === "AbortError") {
-        appendLiveLog("> request aborted");
         return;
       }
       const message = err instanceof Error ? err.message : "Stream error";
-      appendLiveLog(`> error: ${message}`);
       setError(message);
     } finally {
       abortRef.current = null;
@@ -737,14 +802,14 @@ export function NexusChat() {
   }
 
   return (
-    <div className="relative min-h-screen bg-black text-white">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,0.12),transparent_45%),radial-gradient(circle_at_80%_35%,rgba(232,121,249,0.12),transparent_45%),radial-gradient(circle_at_50%_90%,rgba(255,255,255,0.04),transparent_55%)]" />
-        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.06),transparent_18%,transparent_82%,rgba(255,255,255,0.05))]" />
+    <div className="relative min-h-screen bg-black text-white flex flex-col">
+      <div className="pointer-events-none fixed inset-0">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_20%,rgba(34,211,238,0.08),transparent_45%),radial-gradient(circle_at_80%_35%,rgba(232,121,249,0.08),transparent_45%),radial-gradient(circle_at_50%_90%,rgba(255,255,255,0.03),transparent_55%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(to_bottom,rgba(255,255,255,0.04),transparent_18%,transparent_82%,rgba(255,255,255,0.03))]" />
       </div>
 
-      <div className="relative mx-auto w-[95%] sm:w-full max-w-7xl px-2 sm:px-6 py-4 sm:py-10">
-        <div className="flex flex-wrap items-start justify-between gap-6 border-b border-white/5 pb-6">
+      <div className="relative flex-1 flex flex-col mx-auto w-full max-w-7xl px-2 sm:px-4 py-2 sm:py-4 min-h-0">
+        <div className="flex-shrink-0 flex flex-wrap items-start justify-between gap-4 sm:gap-6 border-b border-white/5 pb-4 sm:pb-6 mb-4 sm:mb-6">
           <div>
             <div className="text-xs tracking-[0.28em] text-white/60">APEX OMNI</div>
             <div className="mt-1 text-2xl font-semibold">THE LIVING NEXUS</div>
@@ -752,6 +817,17 @@ export function NexusChat() {
           </div>
           {/* V5: History + New Chat Controls */}
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setSearchOpen(true)}
+              className="flex items-center gap-2 rounded-xl border border-white/10 bg-white/5 px-4 py-2 text-xs font-medium text-white/70 transition-all hover:bg-white/10 hover:text-white transform-gpu will-change-transform"
+              aria-label="Search chat"
+            >
+              <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+              </svg>
+              <span className="hidden sm:inline">Search</span>
+            </button>
             <button
               type="button"
               onClick={toggleSidebar}
@@ -777,20 +853,20 @@ export function NexusChat() {
           </div>
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[minmax(300px,380px)_1fr]">
-          <div className="order-2 lg:order-1">
+        <div className="flex-1 flex flex-col lg:flex-row gap-4 min-h-0">
+          <div className="hidden lg:block lg:w-72 lg:flex-shrink-0 lg:overflow-y-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             <HoloPipeline steps={steps} agents={agents} />
           </div>
 
-          <div className="order-1 grid gap-6 lg:order-2">
-            <div className="nexus-panel rounded-3xl p-5 lg:p-6">
-              <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="flex-1 flex flex-col gap-3 sm:gap-4 min-h-0">
+            <div className="flex-shrink-0 bg-black/40 backdrop-blur-xl rounded-2xl sm:rounded-3xl border border-white/10 p-4 sm:p-5 lg:p-6">
+              <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
                 <div className="text-xs tracking-[0.28em] text-white/60">COMMAND INPUT</div>
                 <div className="text-xs text-white/40">
                   {mode === "thinking" ? "NEXUS THINKING PRO" : mode === "super_thinking" ? "NEXUS_PRO_1" : "STANDARD"}
                 </div>
               </div>
-              <div className="mt-4">
+              <div>
                 {/* Input Container - Mode-aware styling with smooth transitions */}
                 <motion.div
                   animate={showTooltip
@@ -816,7 +892,7 @@ export function NexusChat() {
                 >
                   <textarea
                     value={input}
-                    onChange={(e) => setInput(e.target.value)}
+                    onChange={handleInputChange}
                     onKeyDown={handleKeyDown}
                     placeholder={
                       mode === "super_thinking"
@@ -827,6 +903,37 @@ export function NexusChat() {
                     className="w-full resize-none bg-transparent text-sm leading-6 text-white/90 outline-none placeholder:text-white/30"
                   />
                   
+                  {/* File Upload */}
+                  {selectedFiles.length === 0 && (
+                    <div className="mt-2">
+                      <FileUpload
+                        onFilesSelected={setSelectedFiles}
+                        maxSize={10 * 1024 * 1024}
+                        multiple={true}
+                      />
+                    </div>
+                  )}
+
+                  {/* Selected Files Preview */}
+                  {selectedFiles.length > 0 && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {selectedFiles.map((file, index) => (
+                        <div
+                          key={index}
+                          className="flex items-center gap-2 px-2 py-1 bg-white/5 border border-white/10 rounded-lg text-xs text-white/70"
+                        >
+                          <span className="truncate max-w-[150px]">{file.name}</span>
+                          <button
+                            onClick={() => setSelectedFiles((prev) => prev.filter((_, i) => i !== index))}
+                            className="text-red-400 hover:text-red-300"
+                          >
+                            ×
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   {/* Helper text */}
                   <div className="mt-2 flex items-center gap-2 text-[10px] text-white/40">
                     {mode === "super_thinking" && input.trim().length < MIN_LENGTH_SUPER_CODER && input.trim().length > 0 ? (
@@ -837,6 +944,16 @@ export function NexusChat() {
                       <span>Enter to send • Shift+Enter for new line</span>
                     )}
                   </div>
+
+                  {/* Smart Suggestions */}
+                  {messages.length > 0 && connection === "idle" && (
+                    <SmartSuggestions
+                      messages={messages}
+                      onSelect={(suggestion) => {
+                        setInput(suggestion);
+                      }}
+                    />
+                  )}
                   
                   {/* CONTROL HUB: Unified Mode + Complexity + Action */}
                   <div className="mt-3 flex flex-wrap items-center justify-between gap-4">
@@ -966,7 +1083,7 @@ export function NexusChat() {
 
             {/* NEXUS PLAN LIVE - Blueprint-style thinking visualizer */}
             {(mode === "super_thinking" || mode === "thinking") && thinkingStream && (
-              <div className="relative overflow-hidden rounded-2xl sm:rounded-3xl border border-emerald-500/20 bg-black/80 backdrop-blur-xl">
+              <div className="flex-shrink-0 relative overflow-hidden rounded-2xl sm:rounded-3xl border border-emerald-500/20 bg-black/80 backdrop-blur-xl mb-3 sm:mb-4">
                 {/* Blueprint Grid Background */}
                 <div 
                   className="pointer-events-none absolute inset-0 opacity-[0.03]"
@@ -1030,33 +1147,71 @@ export function NexusChat() {
               </div>
             )}
 
-            {/* FINAL OUTPUT - Wide on mobile */}
-            <div className="nexus-panel rounded-2xl sm:rounded-3xl p-3 sm:p-5 lg:p-6 will-change-contents transform-gpu w-full">
-              <div className="flex items-center justify-between gap-4 border-b border-white/5 pb-3 sm:pb-4">
-                <div className="text-[10px] sm:text-xs tracking-[0.2em] sm:tracking-[0.28em] text-white/60">FINAL OUTPUT</div>
-                <div className="text-[10px] sm:text-xs text-white/40">Markdown</div>
+            {/* Chat Messages Display - Full Height */}
+            <div className="flex-1 flex flex-col min-h-0 bg-black/40 backdrop-blur-xl rounded-2xl sm:rounded-3xl border border-white/10">
+              <div className="flex-shrink-0 flex items-center justify-between gap-4 border-b border-white/5 px-4 sm:px-6 py-3 sm:py-4">
+                <div className="text-[10px] sm:text-xs tracking-[0.2em] sm:tracking-[0.28em] text-white/60">CHAT</div>
+                <div className="text-[10px] sm:text-xs text-white/40" suppressHydrationWarning>
+                  {mounted ? `${messages.length} messages` : "0 messages"}
+                </div>
               </div>
-              <div className="mt-3 sm:mt-4 min-h-[80px] sm:min-h-[100px]">
-                <MarkdownView markdown={answer} />
+              <div className="flex-1 overflow-y-auto px-3 sm:px-5 lg:px-6 py-4 space-y-4 min-h-0 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
+                {!mounted ? (
+                  <div className="text-center py-12 text-white/40">
+                    <p>Loading...</p>
+                  </div>
+                ) : messages.length === 0 ? (
+                  <div className="text-center py-12 text-white/40">
+                    <p>Start a conversation...</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Conversation Summary */}
+                    {activeSession && (
+                      <ChatSummary
+                        messages={messages}
+                        sessionId={activeSession.id}
+                        onSummaryGenerated={() => {
+                          // Summary can be stored in session metadata if needed
+                        }}
+                      />
+                    )}
+
+                    {messages.map((message) => {
+                      const replyToMessage = message.meta?.replyTo
+                        ? messages.find((m) => m.id === message.meta?.replyTo)
+                        : null;
+                      
+                      return (
+                        <div key={message.id}>
+                          <ChatMessage
+                            message={message}
+                            isUser={message.role === "user"}
+                            onEdit={editChatMessage}
+                            onDelete={deleteChatMessage}
+                            onReply={(id) => setReplyToId(id)}
+                            replyToMessage={replyToMessage}
+                          />
+                          {/* Link Previews */}
+                          {message.role === "user" && hasUrls(message.content) && (
+                            <div className="ml-11">
+                              {extractUrls(message.content).map((url, idx) => (
+                                <LinkPreview key={idx} url={url} />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                    {isAITyping && (
+                      <TypingIndicator label="AI is thinking" />
+                    )}
+                    <div ref={messagesEndRef} />
+                  </>
+                )}
               </div>
             </div>
 
-            <div className="nexus-panel rounded-3xl p-5 lg:p-6">
-              <div className="flex items-center justify-between gap-4">
-                <div className="text-xs tracking-[0.28em] text-white/60">LIVE LOG</div>
-                <div className="text-xs text-white/40">{liveLog.length ? `${liveLog.length} lines` : "empty"}</div>
-              </div>
-              <div
-                ref={logRef}
-                className="mt-3 h-56 overflow-auto rounded-2xl border border-white/10 bg-black/60 px-4 py-3 font-mono text-[11px] leading-5 text-white/70 transform-gpu will-change-contents"
-              >
-                <AnimatePresence mode="popLayout">
-                  {liveLog.map((line, i) => (
-                    <AnimatedLogLine key={`${i}-${line.substring(0, 20)}`} line={line} />
-                  ))}
-                </AnimatePresence>
-              </div>
-            </div>
           </div>
         </div>
       </div>
@@ -1066,6 +1221,16 @@ export function NexusChat() {
         isOpen={sidebarOpen}
         onClose={() => setSidebarOpen(false)}
         onNewChat={handleNewChat}
+      />
+
+      {/* Chat Search */}
+      <ChatSearch
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        onSelectMessage={() => {
+          // Scroll to message (implementation can be enhanced)
+          setSearchOpen(false);
+        }}
       />
     </div>
   );

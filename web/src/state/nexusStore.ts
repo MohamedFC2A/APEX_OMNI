@@ -67,6 +67,8 @@ type NexusState = {
   contextWindow: number;
   storageInitialized: boolean;
   _hasHydrated: boolean;
+  isTyping: boolean;
+  isAITyping: boolean;
   reset: () => void;
   setConnection: (connection: NexusConnectionStatus) => void;
   setError: (message: string) => void;
@@ -98,6 +100,10 @@ type NexusState = {
   selectSession: (sessionId: string) => void;
   deleteSession: (sessionId: string) => void;
   appendChatMessage: (role: ChatRole, content: string, meta?: ChatMessage["meta"]) => void;
+  editChatMessage: (messageId: string, newContent: string) => void;
+  deleteChatMessage: (messageId: string) => void;
+  setTyping: (isTyping: boolean) => void;
+  setAITyping: (isTyping: boolean) => void;
   getActiveSession: () => ChatSession | null;
   getMessagesForContext: () => ChatMessage[];
 };
@@ -152,6 +158,8 @@ export const useNexusStore = create<NexusState>()(
   contextWindow: 10,
   storageInitialized: false,
   _hasHydrated: false,
+  isTyping: false,
+  isAITyping: false,
   reset: () => set({
     steps: cloneDefaultSteps(),
     agents: [],
@@ -291,6 +299,43 @@ export const useNexusStore = create<NexusState>()(
     // Persist middleware will automatically save
     set({ sessions: nextSessions });
   },
+  editChatMessage: (messageId, newContent) => {
+    const state = get();
+    const session = state.sessions[state.activeSessionId];
+    if (!session) return;
+    const updatedMessages = session.messages.map((msg) => {
+      if (msg.id === messageId && msg.role === "user") {
+        return {
+          ...msg,
+          content: newContent,
+          meta: { ...msg.meta, editedAt: Date.now() },
+        };
+      }
+      return msg;
+    });
+    const updatedSession: ChatSession = { ...session, messages: updatedMessages, updatedAt: Date.now() };
+    const nextSessions = upsertSession(state.sessions, updatedSession);
+    set({ sessions: nextSessions });
+  },
+  deleteChatMessage: (messageId) => {
+    const state = get();
+    const session = state.sessions[state.activeSessionId];
+    if (!session) return;
+    const updatedMessages = session.messages.map((msg) => {
+      if (msg.id === messageId && msg.role === "user") {
+        return {
+          ...msg,
+          meta: { ...msg.meta, isDeleted: true },
+        };
+      }
+      return msg;
+    });
+    const updatedSession: ChatSession = { ...session, messages: updatedMessages, updatedAt: Date.now() };
+    const nextSessions = upsertSession(state.sessions, updatedSession);
+    set({ sessions: nextSessions });
+  },
+  setTyping: (isTyping) => set({ isTyping }),
+  setAITyping: (isTyping) => set({ isAITyping: isTyping }),
   getActiveSession: () => {
     const state = get();
     return state.sessions[state.activeSessionId] || null;

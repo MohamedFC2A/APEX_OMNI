@@ -112,11 +112,7 @@ const SwarmDetails = React.memo(function SwarmDetails({ agents }: { agents: Nexu
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium text-white/90">{a.agentName}</div>
                 <div className="mt-0.5 truncate text-[11px] text-white/45">
-                  {a.model === "deepseek-reasoner"
-                    ? "DeepSeek R1"
-                    : a.model === "deepseek-chat"
-                      ? "DeepSeek V3"
-                      : "DeepSeek"}
+                  {a.model.split('/').pop()?.split(':')[0] || a.model}
                 </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
@@ -302,8 +298,171 @@ const DesktopPipelineView = React.memo(function DesktopPipelineView({
         <div className="text-xs text-white/40">Steps 1–10</div>
       </div>
 
-      <div className="mt-5 grid gap-2">
-        {steps.map((s) => (
+      <div className="mt-5 space-y-3">
+        {/* Group: Initial Steps (1-4) */}
+        {steps.filter(s => s.id <= 4).map((s) => (
+          <div
+            key={s.id}
+            className={
+              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 transform-gpu will-change-transform " +
+              rowClasses(s.status)
+            }
+            style={{ transform: "perspective(1000px) rotateX(3deg)" }}
+          >
+            <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(s.status)} />
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-[30px] w-[30px] items-center justify-center">
+                <div className="relative h-[30px] w-[30px]">
+                  <ProgressRing
+                    status={s.status}
+                    percent={
+                      s.status === "completed"
+                        ? 100
+                        : s.status !== "running"
+                          ? 0
+                          : typeof s.percent === "number" && s.percent > 0
+                            ? s.percent
+                            : typeof s.startedAt === "number"
+                              ? Math.min(92, Math.max(0, ((now - s.startedAt) / 1500) * 92))
+                              : 0
+                    }
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-white/85">
+                    {s.status === "completed" ? "✓" : s.id}
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className="text-[11px] text-white/45">Step {s.id}</div>
+                      <div className="truncate text-sm font-medium text-white/90">{s.label}</div>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-white/40">{s.name}</div>
+                  </div>
+                  <div className="text-[11px] text-white/35">
+                    {s.status === "running"
+                      ? `${Math.round(s.percent || 0)}%`
+                      : s.status === "idle"
+                        ? "queued"
+                        : s.status}
+                  </div>
+                </div>
+
+                {s.status === "running" ? (
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200"
+                      style={{ width: `${Math.max(0, Math.min(100, s.percent || 0))}%` }}
+                    />
+                  </div>
+                ) : null}
+
+                {s.id === 1 && agents.length ? <SwarmDetails agents={agents} /> : null}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Group Separator: Multi-Model Execution */}
+        {steps.find(s => s.id === 5) && (
+          <div className="relative py-2">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10"></div>
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-black/40 px-3 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                Multi-Model Parallel Execution
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Group: Multi-Model Step (5) */}
+        {steps.filter(s => s.id === 5).map((s) => (
+          <div
+            key={s.id}
+            className={
+              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 transform-gpu will-change-transform " +
+              rowClasses(s.status)
+            }
+            style={{ transform: "perspective(1000px) rotateX(3deg)" }}
+          >
+            <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(s.status)} />
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 flex h-[30px] w-[30px] items-center justify-center">
+                <div className="relative h-[30px] w-[30px]">
+                  <ProgressRing
+                    status={s.status}
+                    percent={
+                      s.status === "completed"
+                        ? 100
+                        : s.status !== "running"
+                          ? 0
+                          : typeof s.percent === "number" && s.percent > 0
+                            ? s.percent
+                            : typeof s.startedAt === "number"
+                              ? Math.min(92, Math.max(0, ((now - s.startedAt) / 1500) * 92))
+                              : 0
+                    }
+                  />
+                  <div className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-white/85">
+                    {s.status === "completed" ? "✓" : s.id}
+                  </div>
+                </div>
+              </div>
+
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="flex items-center gap-2">
+                      <div className="text-[11px] text-white/45">Step {s.id}</div>
+                      <div className="truncate text-sm font-medium text-white/90">{s.label}</div>
+                    </div>
+                    <div className="mt-0.5 truncate text-xs text-white/40">{s.name}</div>
+                  </div>
+                  <div className="text-[11px] text-white/35">
+                    {s.status === "running"
+                      ? `${Math.round(s.percent || 0)}%`
+                      : s.status === "idle"
+                        ? "queued"
+                        : s.status}
+                  </div>
+                </div>
+
+                {s.status === "running" ? (
+                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+                    <div
+                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200"
+                      style={{ width: `${Math.max(0, Math.min(100, s.percent || 0))}%` }}
+                    />
+                  </div>
+                ) : null}
+
+                {s.id === 1 && agents.length ? <SwarmDetails agents={agents} /> : null}
+              </div>
+            </div>
+          </div>
+        ))}
+
+        {/* Group Separator: Final Aggregation */}
+        {steps.find(s => s.id === 6) && (
+          <div className="relative py-2">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10"></div>
+            </div>
+            <div className="relative flex justify-center">
+              <span className="bg-black/40 px-3 text-[10px] font-semibold uppercase tracking-wider text-white/50">
+                Final Aggregation
+              </span>
+            </div>
+          </div>
+        )}
+
+        {/* Group: Final Steps (6-10) */}
+        {steps.filter(s => s.id >= 6).map((s) => (
           <div
             key={s.id}
             className={

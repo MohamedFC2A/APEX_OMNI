@@ -110,14 +110,14 @@ export function HistorySidebar({ isOpen, onClose, onNewChat }: HistorySidebarPro
             animate={{ x: 0 }}
             exit={{ x: "-100%" }}
             transition={{ type: "spring", damping: 30, stiffness: 300 }}
-            className="fixed left-0 top-0 z-[99999] h-full w-[320px] max-w-[85vw] bg-gradient-to-b from-gray-900/98 to-black/98 border-r border-white/10 shadow-2xl shadow-black/50 transform-gpu will-change-transform"
+            className="fixed left-0 top-0 z-[99999] h-full w-[320px] max-w-[85vw] bg-black/80 backdrop-blur-xl border-r border-white/10 shadow-2xl shadow-black/50 transform-gpu will-change-transform"
             role="dialog"
             aria-modal="true"
             aria-label="Chat History"
           >
             {/* Header */}
-            <div className="flex items-center justify-between border-b border-white/10 p-4">
-              <h2 className="text-sm font-semibold tracking-wide text-white/90">
+            <div className="flex items-center justify-between border-b border-white/10 bg-black/40 p-4">
+              <h2 className="text-xs font-bold tracking-[0.2em] text-white/70 uppercase">
                 PAST CONVERSATIONS
               </h2>
               <div className="flex items-center gap-2">
@@ -146,7 +146,7 @@ export function HistorySidebar({ isOpen, onClose, onNewChat }: HistorySidebarPro
             </div>
 
             {/* Session List */}
-            <div className="flex-1 overflow-y-auto p-3">
+            <div className="flex-1 overflow-y-auto p-3 [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
               {sortedSessions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center py-12 text-center">
                   <div className="mb-3 rounded-full bg-white/5 p-4">
@@ -168,8 +168,8 @@ export function HistorySidebar({ isOpen, onClose, onNewChat }: HistorySidebarPro
                       whileTap={{ scale: 0.99 }}
                       className={`group relative w-full rounded-xl p-3 text-left transition-all transform-gpu ${
                         session.id === activeSessionId
-                          ? "bg-gradient-to-r from-cyan-500/20 to-fuchsia-500/10 border border-cyan-400/30"
-                          : "bg-white/5 border border-transparent hover:bg-white/10 hover:border-white/10"
+                          ? "bg-gradient-to-r from-cyan-500/20 to-fuchsia-500/10 border border-cyan-400/30 shadow-lg shadow-cyan-500/10"
+                          : "bg-white/5 border border-white/5 hover:bg-white/10 hover:border-white/15"
                       }`}
                     >
                       {/* Title */}
@@ -179,8 +179,8 @@ export function HistorySidebar({ isOpen, onClose, onNewChat }: HistorySidebarPro
                         }`}>
                           {session.title || "New Chat"}
                         </p>
-                        <p className="mt-1 text-xs text-white/40">
-                          {session.messages.length} messages • {formatRelativeTime(session.updatedAt)}
+                        <p className="mt-1 text-xs text-white/40" suppressHydrationWarning>
+                          {session.messages?.length || 0} messages • {formatRelativeTime(session.updatedAt)}
                         </p>
                       </div>
 
@@ -207,8 +207,8 @@ export function HistorySidebar({ isOpen, onClose, onNewChat }: HistorySidebarPro
             </div>
 
             {/* Footer */}
-            <div className="border-t border-white/10 p-4">
-              <p className="text-center text-[10px] text-white/30">
+            <div className="border-t border-white/10 bg-black/40 p-4">
+              <p className="text-center text-[10px] text-white/40">
                 Sessions stored locally in your browser
               </p>
             </div>

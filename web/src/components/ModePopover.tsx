@@ -13,6 +13,7 @@ interface ModeOption {
   sublabel: string;
   description: string;
   accentColor: string;
+  gradient: string;
 }
 
 const MODES: ModeOption[] = [
@@ -20,9 +21,10 @@ const MODES: ModeOption[] = [
     value: "standard",
     icon: "⚡",
     label: "STANDARD",
-    sublabel: "DeepSeek-V3.2 (Fast)",
-    description: "Instant responses for quick tasks",
-    accentColor: "cyan",
+    sublabel: "NEXUS_PRO_1",
+    description: "Multiple models: Mimo, Devstral, DeepSeek NEX, GPT-OSS",
+    accentColor: "purple",
+    gradient: "from-purple-500 via-fuchsia-500 to-purple-600",
   },
   {
     value: "thinking",
@@ -30,7 +32,8 @@ const MODES: ModeOption[] = [
     label: "NEXUS THINKING PRO",
     sublabel: "DeepSeek-V3.2 (Reasoning)",
     description: "Displays intermediate thoughts",
-    accentColor: "purple",
+    accentColor: "gold",
+    gradient: "from-yellow-400 via-amber-500 to-yellow-600",
   },
   {
     value: "super_thinking",
@@ -39,6 +42,7 @@ const MODES: ModeOption[] = [
     sublabel: "DeepSeek-V3.2 (Coding Master)",
     description: "Full system-wide logic & code",
     accentColor: "emerald",
+    gradient: "from-emerald-400 via-cyan-500 to-emerald-600",
   },
 ];
 
@@ -140,14 +144,10 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
 
   const pos = getMenuPosition();
 
-  // Get accent colors for mode
+  // Get accent colors for mode with glass effect (less vibrant)
   const getAccentClasses = (mode: ModeOption, isActive: boolean, isFocused: boolean) => {
     if (isActive) {
-      return mode.accentColor === "cyan"
-        ? "bg-cyan-500/10 border-l-2 border-l-cyan-400"
-        : mode.accentColor === "purple"
-          ? "bg-purple-500/10 border-l-2 border-l-purple-400"
-          : "bg-emerald-500/10 border-l-2 border-l-emerald-400";
+      return `bg-black/30 backdrop-blur-md border-l-2 border-l-${mode.accentColor}-400/40`;
     }
     if (isFocused) {
       return "bg-white/5 border-l-2 border-l-white/20";
@@ -156,11 +156,11 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
   };
 
   const getActiveBadgeClasses = (mode: ModeOption) => {
-    return mode.accentColor === "cyan"
-      ? "bg-cyan-500/20 text-cyan-300"
-      : mode.accentColor === "purple"
-        ? "bg-purple-500/20 text-purple-300"
-        : "bg-emerald-500/20 text-emerald-300";
+    return `bg-${mode.accentColor}-500/20 text-${mode.accentColor}-300 border border-${mode.accentColor}-500/30 backdrop-blur-sm`;
+  };
+
+  const getTriggerGradient = (mode: ModeOption) => {
+    return `bg-gradient-to-r ${mode.gradient} bg-opacity-60 text-white shadow-lg shadow-${mode.accentColor}-500/20 backdrop-blur-md`;
   };
 
   // The dropdown menu content
@@ -196,7 +196,7 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
               width: 300,
               zIndex: 999999,
             }}
-            className="overflow-hidden rounded-2xl border border-cyan-500/20 bg-black/80 shadow-2xl shadow-black/50 backdrop-blur-xl"
+            className="overflow-hidden rounded-2xl border border-white/10 bg-black/60 shadow-2xl shadow-black/50 backdrop-blur-2xl"
           >
             {/* Header */}
             <div className="border-b border-white/5 bg-white/[0.02] px-4 py-3">
@@ -222,7 +222,7 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
                     <span className="text-xl">{mode.icon}</span>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
-                        <span className="text-sm font-semibold text-white/90 truncate">
+                        <span className="text-sm font-semibold text-white/95 truncate">
                           {mode.label}
                         </span>
                         {isActive && (
@@ -231,10 +231,10 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
                           </span>
                         )}
                       </div>
-                      <div className="mt-0.5 text-[11px] text-white/40 truncate">
+                      <div className="mt-0.5 text-[11px] text-white/60 truncate">
                         {mode.sublabel}
                       </div>
-                      <div className="mt-0.5 text-[10px] text-white/30 truncate">
+                      <div className="mt-0.5 text-[10px] text-white/50 truncate">
                         {mode.description}
                       </div>
                     </div>
@@ -250,27 +250,35 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
 
   return (
     <div className="relative">
-      {/* Trigger Button */}
+      {/* Trigger Button with Shiny Gradient */}
       <button
         ref={triggerRef}
         type="button"
         onClick={handleToggle}
-        className={`group relative flex items-center gap-2.5 rounded-xl border bg-black/60 px-3.5 py-2 backdrop-blur-xl transition-all duration-200 ${
+        className={`group relative flex items-center gap-2.5 rounded-xl border px-3.5 py-2 backdrop-blur-xl transition-all duration-200 overflow-hidden ${
           isOpen
-            ? "border-white/20 shadow-lg shadow-black/20"
-            : "border-white/10 hover:border-white/15"
+            ? `${getTriggerGradient(selectedMode)} border-${selectedMode.accentColor}-500/40`
+            : `bg-black/40 border-white/10 hover:border-${selectedMode.accentColor}-500/30 hover:bg-black/60`
         }`}
       >
-        <span className="text-base">{selectedMode.icon}</span>
-        <div className="text-left">
-          <div className="text-[11px] font-semibold tracking-wide text-white/90">
+        {/* Shine effect */}
+        <div className={`absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent transform -skew-x-12 transition-transform duration-1000 ${
+          isOpen ? "translate-x-full" : "-translate-x-full group-hover:translate-x-full"
+        }`} />
+        <span className="text-base relative z-10">{selectedMode.icon}</span>
+        <div className="text-left relative z-10">
+          <div className={`text-[11px] font-semibold tracking-wide ${
+            isOpen ? "text-white" : "text-white/90"
+          }`}>
             {selectedMode.label}
           </div>
-          <div className="text-[9px] text-white/40">{selectedMode.sublabel}</div>
+          <div className={`text-[9px] ${
+            isOpen ? "text-white/90" : "text-white/60"
+          }`}>{selectedMode.sublabel}</div>
         </div>
         <svg
-          className={`ml-1 h-3.5 w-3.5 text-white/40 transition-transform duration-200 ${
-            isOpen ? "rotate-180" : ""
+          className={`ml-1 h-3.5 w-3.5 relative z-10 transition-transform duration-200 ${
+            isOpen ? "rotate-180 text-white" : "text-white/70"
           }`}
           fill="none"
           viewBox="0 0 24 24"
