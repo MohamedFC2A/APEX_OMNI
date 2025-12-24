@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { motion } from "framer-motion";
+import Image from "next/image";
 
 interface LinkPreviewData {
   title?: string;
@@ -94,9 +95,11 @@ export function LinkPreview({ url }: LinkPreviewProps) {
     >
       {preview.image && (
         <div className="relative h-40 w-full overflow-hidden">
-          <img
+          <Image
             src={preview.image}
             alt={preview.title || "Preview"}
+            width={800}
+            height={400}
             className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
             loading="lazy"
           />

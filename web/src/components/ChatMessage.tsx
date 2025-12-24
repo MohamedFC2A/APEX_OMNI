@@ -2,6 +2,7 @@
 
 import React, { useState, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
+import Image from "next/image";
 import type { ChatMessage as ChatMessageType, ChatAttachment } from "@/types/chat";
 import { MarkdownView } from "@/components/NexusChat";
 
@@ -211,9 +212,11 @@ function AttachmentDisplay({ attachment }: { attachment: ChatAttachment }) {
   if (attachment.type === "image") {
     return (
       <div className="relative rounded-lg overflow-hidden border border-white/10">
-        <img
+        <Image
           src={attachment.thumbnailUrl || attachment.url}
-          alt={attachment.name}
+          alt={attachment.name || "Attachment"}
+          width={800}
+          height={600}
           className="max-w-full h-auto max-h-64 object-contain"
           loading="lazy"
         />

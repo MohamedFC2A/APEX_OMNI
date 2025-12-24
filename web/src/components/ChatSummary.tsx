@@ -80,16 +80,17 @@ export function ChatSummary({ messages, onSummaryGenerated }: ChatSummaryProps) 
 
     // Title
     doc.setFontSize(18);
+    doc.setFont("helvetica", "bold");
     doc.text("Conversation Summary", pageWidth / 2, yPos, { align: "center" });
     yPos += 15;
 
     // Quick Look
     doc.setFontSize(14);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Quick Look", margin, yPos);
     yPos += 8;
     doc.setFontSize(11);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const quickLookLines = doc.splitTextToSize(summaryData.quickLook, pageWidth - 2 * margin);
     doc.text(quickLookLines, margin, yPos);
     yPos += quickLookLines.length * 6 + 10;
@@ -97,11 +98,11 @@ export function ChatSummary({ messages, onSummaryGenerated }: ChatSummaryProps) 
     // Key Topics
     if (summaryData.keyTopics.length > 0) {
       doc.setFontSize(14);
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
       doc.text("Key Topics", margin, yPos);
       yPos += 8;
       doc.setFontSize(11);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
       summaryData.keyTopics.forEach((topic) => {
         doc.text(`• ${topic}`, margin + 5, yPos);
         yPos += 6;
@@ -116,11 +117,11 @@ export function ChatSummary({ messages, onSummaryGenerated }: ChatSummaryProps) 
         yPos = margin;
       }
       doc.setFontSize(14);
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
       doc.text("Action Items", margin, yPos);
       yPos += 8;
       doc.setFontSize(11);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
       summaryData.actionItems.forEach((item) => {
         doc.text(`• ${item}`, margin + 5, yPos);
         yPos += 6;
@@ -135,11 +136,11 @@ export function ChatSummary({ messages, onSummaryGenerated }: ChatSummaryProps) 
         yPos = margin;
       }
       doc.setFontSize(14);
-      doc.setFont(undefined, "bold");
+      doc.setFont("helvetica", "bold");
       doc.text("User Preferences", margin, yPos);
       yPos += 8;
       doc.setFontSize(11);
-      doc.setFont(undefined, "normal");
+      doc.setFont("helvetica", "normal");
       summaryData.userPreferences.forEach((pref) => {
         doc.text(`• ${pref}`, margin + 5, yPos);
         yPos += 6;
@@ -153,11 +154,11 @@ export function ChatSummary({ messages, onSummaryGenerated }: ChatSummaryProps) 
       yPos = margin;
     }
     doc.setFontSize(14);
-    doc.setFont(undefined, "bold");
+    doc.setFont("helvetica", "bold");
     doc.text("Full Summary", margin, yPos);
     yPos += 8;
     doc.setFontSize(11);
-    doc.setFont(undefined, "normal");
+    doc.setFont("helvetica", "normal");
     const summaryLines = doc.splitTextToSize(summaryData.fullSummary, pageWidth - 2 * margin);
     doc.text(summaryLines, margin, yPos);
 
