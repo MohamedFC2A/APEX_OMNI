@@ -204,8 +204,8 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
         type="button"
         onClick={handleToggle}
         className={`group relative flex items-center gap-2.5 rounded-xl border px-3.5 py-2 backdrop-blur-xl transition-all duration-200 overflow-hidden ${isOpen
-            ? `${getTriggerGradient(selectedMode)} border-${selectedMode.accentColor}-500/40`
-            : `bg-black/40 border-white/10 hover:border-${selectedMode.accentColor}-500/30 hover:bg-black/60`
+          ? `${getTriggerGradient(selectedMode)} border-${selectedMode.accentColor}-500/40`
+          : `bg-black/40 border-white/10 hover:border-${selectedMode.accentColor}-500/30 hover:bg-black/60`
           }`}
       >
         {/* Shine effect */}
@@ -421,6 +421,13 @@ export function ModePopover({ value, onChange }: ModePopoverProps) {
                             {infoOpen === "DEEP_THINKING" && "7 parallel reasoning models with aggregation"}
                             {infoOpen === "APEX" && "12 specialist models (7 reasoning + 5 experts) with final synthesis"}
                           </div>
+                        </div>
+                      </div>
+
+                      {/* Developer attribution */}
+                      <div className="pt-4 border-t border-white/10 mt-4">
+                        <div className="text-[10px] text-white/40 text-center tracking-wide">
+                          Developed by Mohamed Matany
                         </div>
                       </div>
                     </>

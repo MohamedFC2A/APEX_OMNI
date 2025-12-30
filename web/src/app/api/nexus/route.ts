@@ -46,6 +46,19 @@ const THINKING_MAX_TOKENS = 2200;
 const APEX_MAX_TOKENS = 3200;
 const AGGREGATOR_MAX_TOKENS = 4200;
 
+// Developer attribution - displayed in UI
+const DEVELOPER_INFO = "Developed by Mohamed Matany";
+
+// Pipeline execution policies (reserved for enhanced retry logic)
+/* eslint-disable @typescript-eslint/no-unused-vars */
+const SKIP_ON_TIMEOUT = true;
+const SKIP_ON_4XX_5XX = true;
+const MAX_MODEL_RETRIES = 1;
+const MODEL_TIMEOUT_MS = 12000;
+const PRE_PING_ENABLED = true;
+/* eslint-enable @typescript-eslint/no-unused-vars */
+
+// System prompts for each mode
 const FLASH_SYSTEM_PROMPT =
   "You are NEXUS Flash. Respond fast, direct, and correct. End with a section titled \"Core Synthesis Assembling\" containing exactly 2 bullet lines.";
 
@@ -651,25 +664,25 @@ async function runAggregator(
   try {
     const response = useDeepSeek
       ? await deepseek.chat.completions.create({
-          model: "deepseek-chat",
-          messages: [
-            { role: "system", content: `You are the final aggregator. ${languageInstruction}` },
-            { role: "user", content: aggregatorPrompt },
-          ],
-          stream: true,
-          max_tokens: AGGREGATOR_MAX_TOKENS,
-          temperature: 0.5,
-        })
+        model: "deepseek-chat",
+        messages: [
+          { role: "system", content: `You are the final aggregator. ${languageInstruction}` },
+          { role: "user", content: aggregatorPrompt },
+        ],
+        stream: true,
+        max_tokens: AGGREGATOR_MAX_TOKENS,
+        temperature: 0.5,
+      })
       : await openrouter.chat.completions.create({
-          model: resolveModelId("NEXUS_FLASH_PRO"),
-          messages: [
-            { role: "system", content: `You are the final aggregator. ${languageInstruction}` },
-            { role: "user", content: aggregatorPrompt },
-          ],
-          stream: true,
-          max_tokens: AGGREGATOR_MAX_TOKENS,
-          temperature: 0.5,
-        });
+        model: resolveModelId("NEXUS_FLASH_PRO"),
+        messages: [
+          { role: "system", content: `You are the final aggregator. ${languageInstruction}` },
+          { role: "user", content: aggregatorPrompt },
+        ],
+        stream: true,
+        max_tokens: AGGREGATOR_MAX_TOKENS,
+        temperature: 0.5,
+      });
 
     sendEvent("agent_finish", {
       agent: aggregatorAgentId,
@@ -826,9 +839,9 @@ export async function POST(req: NextRequest) {
         pipeline.start("prompt", "Building messages");
         const trimmedHistory = Array.isArray(history)
           ? history.slice(-6).map((h: { role: string; content: string }) => ({
-              role: h.role as ChatMessage["role"],
-              content: String(h.content || ""),
-            }))
+            role: h.role as ChatMessage["role"],
+            content: String(h.content || ""),
+          }))
           : [];
         pipeline.finish("prompt", "success", "Prompt ready");
 
@@ -897,6 +910,7 @@ export async function POST(req: NextRequest) {
             modelName: sanitizeModelNameForUI(modelName, mode),
             finalAnswerSummary: core.summary,
             pipeline: pipeline.snapshot(),
+            developerInfo: DEVELOPER_INFO,
             at: Date.now(),
           });
           sendEvent("run_finish", { status: "ok", pipeline: pipeline.snapshot(), at: Date.now() });

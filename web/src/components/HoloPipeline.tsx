@@ -448,9 +448,10 @@ export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agen
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: 12, scale: 0.98 }}
             transition={{ type: "spring", stiffness: 520, damping: 40, mass: 0.7 }}
-            className="fixed bottom-20 right-4 z-[110] w-[92vw] max-w-[460px] max-h-[70vh] rounded-3xl lg-surface lg-surface-strong lg-depth-2 glass-noise lg-shine overflow-hidden"
+            className="fixed bottom-20 right-4 z-[110] w-[92vw] max-w-[460px] max-h-[70vh] rounded-3xl lg-surface lg-surface-strong lg-depth-2 glass-noise lg-shine overflow-hidden flex flex-col"
           >
-            <div className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3">
+            {/* Header */}
+            <div className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3 shrink-0">
               <div className="min-w-0">
                 <div className="text-[10px] uppercase tracking-[0.28em] text-white/60">{t("pipeline.title")}</div>
                 <div className="mt-1 text-sm font-semibold text-white/90">{modeLabel || "NEXUS RUN"}</div>
@@ -472,7 +473,9 @@ export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agen
               </div>
             </div>
 
-            <div className="flex-1 overflow-y-auto p-4 space-y-4 [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.35)_transparent]">
+            {/* Scrollable Content with Liquid Glass scrollbar */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.35)_transparent] [&::-webkit-scrollbar]:w-2 [&::-webkit-scrollbar-track]:bg-transparent [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/20 hover:[&::-webkit-scrollbar-thumb]:bg-white/30">
+              {/* Pipeline Stages */}
               <div className="space-y-3">
                 {!hasStages && (
                   <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60">
@@ -483,7 +486,7 @@ export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agen
                   <div
                     key={stage.id}
                     className={
-                      "rounded-2xl border px-3 py-3 transition-all " +
+                      "rounded-2xl border px-3 py-3 transition-all duration-200 " +
                       (stage.status === "running"
                         ? "border-cyan-400/40 bg-cyan-500/10 shadow-[0_0_28px_rgba(34,211,238,0.22)]"
                         : stage.status === "success"
@@ -492,7 +495,9 @@ export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agen
                             ? "border-red-400/40 bg-red-500/10"
                             : stage.status === "timeout"
                               ? "border-amber-400/40 bg-amber-500/10"
-                              : "border-white/10 bg-white/5")
+                              : stage.status === "skipped"
+                                ? "border-slate-400/20 bg-slate-500/5"
+                                : "border-white/10 bg-white/5")
                     }
                   >
                     <div className="flex items-start justify-between gap-3">
@@ -516,6 +521,7 @@ export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agen
                 ))}
               </div>
 
+              {/* Deep Thinking / Apex sections */}
               {(isDeepThinking || isApex) && (
                 <div className="space-y-3">
                   <DeepThinkingLanes agents={agents} reasoningByAgent={reasoningPaths} />
@@ -524,6 +530,11 @@ export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agen
               )}
 
               <SwarmDetails agents={agents} />
+            </div>
+
+            {/* Footer with developer attribution */}
+            <div className="border-t border-white/10 px-4 py-2 text-center shrink-0 bg-black/20">
+              <span className="text-[10px] text-white/40 tracking-wide">Developed by Mohamed Matany</span>
             </div>
           </motion.div>
         )}

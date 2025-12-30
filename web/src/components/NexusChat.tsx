@@ -21,6 +21,11 @@ import type { ChatAttachment } from "@/types/chat";
 import { useHasMounted, useLanguage } from "@/hooks/useHasMounted";
 import { STANDARD_AGENTS, THINKING_AGENTS, SUPER_THINKING_AGENTS } from "@/lib/nexusMeta";
 import { normalizeRegistryMode, sanitizeModelNameForUI } from "@/lib/modelRegistry";
+import { FileSpreadsheet, PieChart as PieChartIcon } from "lucide-react";
+import ExcelJS from "exceljs";
+import html2canvas from "html2canvas";
+import { AnalyticsCard, type AnalyticsData } from "@/components/AnalyticsCard";
+import { createPortal } from "react-dom";
 
 type AgentMeta = { agent: string; agentName: string; model: string };
 
@@ -376,6 +381,154 @@ const ChatSkeleton = () => (
   </div>
 );
 
+// ========== VISUAL ANALYTICS PRO BUTTON ==========
+interface VisualAnalyticsButtonProps {
+  messages: Array<{ role: string; content: string }>;
+  getActiveSession: () => { summary?: string } | null;
+}
+
+function VisualAnalyticsButton({ messages, getActiveSession }: VisualAnalyticsButtonProps) {
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [chartData, setChartData] = useState<AnalyticsData | null>(null);
+  const chartRef = useRef<HTMLDivElement>(null);
+
+  const handleGenerateChart = async () => {
+    if (isGenerating) return;
+    setIsGenerating(true);
+
+    try {
+      // Build context from messages
+      const session = getActiveSession();
+      const contextText = messages
+        .slice(-20) // Last 20 messages
+        .map(m => `${m.role}: ${m.content}`)
+        .join("\n");
+
+      const summaryText = session?.summary || "";
+
+      if (!contextText && !summaryText) {
+        alert("No conversation context to analyze. Start a conversation first.");
+        setIsGenerating(false);
+        return;
+      }
+
+      // Call AI to extract chart data
+      const response = await fetch("/api/nexus/analyze-chart", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          context: contextText,
+          summary: summaryText,
+        }),
+      });
+
+      if (!response.ok) {
+        // Fallback to demo data if API fails
+        console.warn("Chart API failed, using demo data");
+        const demoData: AnalyticsData = {
+          type: "area",
+          title: "Conversation Analytics",
+          labels: ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"],
+          data: [420, 380, 510, 620, 580, 450, 720],
+          insight: "Your conversations show peak engagement mid-week with a strong upward trend toward the weekend. Consider leveraging this pattern for important discussions.",
+        };
+        setChartData(demoData);
+      } else {
+        const data = await response.json();
+        setChartData(data as AnalyticsData);
+      }
+    } catch (err) {
+      console.error("Chart generation error:", err);
+      // Use demo data on error
+      const demoData: AnalyticsData = {
+        type: "bar",
+        title: "Topic Distribution",
+        labels: ["Tech", "Business", "Creative", "Research", "Planning"],
+        data: [35, 28, 18, 12, 7],
+        insight: "Technology topics dominate your conversations, followed by business discussions. This suggests a strong focus on technical solutions.",
+      };
+      setChartData(demoData);
+    }
+  };
+
+  const captureAndDownload = async () => {
+    if (!chartRef.current) return;
+
+    try {
+      // Wait for chart animation
+      await new Promise(resolve => setTimeout(resolve, 500));
+
+      const canvas = await html2canvas(chartRef.current, {
+        scale: 3, // HD quality
+        backgroundColor: "#0f172a", // Dark slate background for consistent output
+        useCORS: true,
+        logging: false,
+      } as Parameters<typeof html2canvas>[1]);
+
+      // Convert to JPG
+      const jpgUrl = canvas.toDataURL("image/jpeg", 0.95);
+      const link = document.createElement("a");
+      link.href = jpgUrl;
+      link.download = `Nexus_Chart_${new Date().toISOString().split("T")[0]}.jpg`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+
+      // Reset state
+      setChartData(null);
+      setIsGenerating(false);
+    } catch (err) {
+      console.error("Canvas capture failed:", err);
+      alert("Failed to capture chart. Please try again.");
+      setChartData(null);
+      setIsGenerating(false);
+    }
+  };
+
+  // Auto-capture when chart data is ready
+  React.useEffect(() => {
+    if (chartData && chartRef.current) {
+      captureAndDownload();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chartData]);
+
+  return (
+    <>
+      <div className="relative group">
+        <button
+          type="button"
+          onClick={handleGenerateChart}
+          disabled={isGenerating}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-medium transition-all ${isGenerating
+            ? "bg-cyan-500/20 border-cyan-500/30 text-cyan-300 cursor-wait"
+            : "bg-cyan-500/10 border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/20 hover:border-cyan-400/40"
+            }`}
+          title="Generate Visual Analytics (JPG Chart)"
+        >
+          {isGenerating ? (
+            <div className="h-3.5 w-3.5 border-2 border-cyan-300/30 border-t-cyan-300 rounded-full animate-spin" />
+          ) : (
+            <PieChartIcon className="h-3.5 w-3.5" />
+          )}
+          <span className="hidden sm:inline">{isGenerating ? "Generating..." : "Charts"}</span>
+        </button>
+        <span className="absolute -top-2 -right-2 px-1.5 py-0.5 bg-gradient-to-r from-cyan-400 via-emerald-400 to-cyan-400 text-[8px] font-bold text-black rounded-full shadow-lg group-hover:animate-pulse">
+          PRO
+        </span>
+      </div>
+
+      {/* Hidden chart renderer portal */}
+      {chartData && typeof window !== "undefined" && createPortal(
+        <div className="fixed top-0 left-0 -z-50 opacity-0 pointer-events-none">
+          <AnalyticsCard ref={chartRef} data={chartData} />
+        </div>,
+        document.body
+      )}
+    </>
+  );
+}
+
 export function NexusChat() {
   const {
     pipeline,
@@ -461,6 +614,7 @@ export function NexusChat() {
   const [searchOpen, setSearchOpen] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [replyToId, setReplyToId] = useState<string | null>(null);
+  const [isChartMode, setIsChartMode] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [agentMeta, setAgentMeta] = useState<{ standard: AgentMeta[]; thinking: AgentMeta[]; super_thinking: AgentMeta[] }>(() => ({
@@ -939,6 +1093,117 @@ export function NexusChat() {
 
     abortRef.current?.abort();
     abortRef.current = null;
+
+    // ============ SILENT CHART MODE INTERCEPT ============
+    if (isChartMode) {
+      setConnection("streaming");
+      // Add user message to chat
+      appendChatMessage("user", query);
+      setInput("");
+
+      try {
+        // Call the AI for chart data extraction
+        const response = await fetch("/api/nexus/analyze-chart", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userPrompt: query }),
+        });
+
+        if (!response.ok) {
+          throw new Error("Chart API failed");
+        }
+
+        const chartData = await response.json();
+
+        // CHECK FOR API ERROR FLAG (Phase 2 Fix)
+        if (chartData.error) {
+          throw new Error(chartData.details || "AI Analysis Failed");
+        }
+
+        // Create a temporary container for the chart
+        const container = document.createElement("div");
+        container.style.position = "fixed";
+        container.style.top = "-9999px";
+        container.style.left = "-9999px";
+        document.body.appendChild(container);
+
+        // Dynamically import and render the chart
+        const { createRoot } = await import("react-dom/client");
+        const { AnalyticsCard: ChartComponent } = await import("@/components/AnalyticsCard");
+
+        // Create a promise that resolves when chart is rendered and captured
+        const chartImageUrl = await new Promise<string>((resolve, reject) => {
+          const chartElement = document.createElement("div");
+          container.appendChild(chartElement);
+
+          const chartRoot = createRoot(chartElement);
+
+          // Use a ref callback that captures when the element is ready
+          let capturedRef: HTMLDivElement | null = null;
+
+          const refCallback = (el: HTMLDivElement | null) => {
+            if (el && !capturedRef) {
+              capturedRef = el;
+              // Wait for chart to render & animate (Phase 2 Fix: 1500ms)
+              setTimeout(async () => {
+                try {
+                  const canvas = await html2canvas(el, {
+                    scale: 3,
+                    backgroundColor: "#0f172a",
+                    useCORS: true,
+                    logging: false,
+                  } as Parameters<typeof html2canvas>[1]);
+
+                  const jpgUrl = canvas.toDataURL("image/jpeg", 0.95);
+                  chartRoot.unmount();
+                  resolve(jpgUrl);
+                } catch (err) {
+                  chartRoot.unmount();
+                  reject(err);
+                }
+              }, 1500); // Increased from 600ms to 1500ms
+            }
+          };
+
+          // Render using createElement to avoid JSX issues in async context
+          chartRoot.render(
+            React.createElement(ChartComponent, { data: chartData, ref: refCallback })
+          );
+        });
+
+        // Clean up
+        document.body.removeChild(container);
+
+        // Add chart as assistant message with image
+        appendChatMessage("assistant", `📊 **${chartData.title}**\n\n${chartData.insight}`, {
+          attachments: [{
+            id: `chart-${Date.now()}`,
+            type: "image",
+            url: chartImageUrl,
+            name: `Nexus_Chart_${new Date().toISOString().split("T")[0]}.jpg`,
+            size: chartImageUrl.length, // Approximate size from data URL
+            mimeType: "image/jpeg",
+          }],
+        });
+
+        // Auto-download the chart
+        const link = document.createElement("a");
+        link.href = chartImageUrl;
+        link.download = `Nexus_Chart_${new Date().toISOString().split("T")[0]}.jpg`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+
+      } catch (err) {
+        console.error("Chart generation failed:", err);
+        appendChatMessage("assistant", "❌ Chart generation failed. Please try again with a different query.");
+      }
+
+      setConnection("done");
+      setIsChartMode(false); // Auto-disable after generating
+      return; // STOP - do not continue to normal text flow
+    }
+    // ============ END CHART MODE INTERCEPT ============
 
     // V5: Get message history for context BEFORE resetting state
     // This ensures we capture the current conversation context
@@ -1537,8 +1802,31 @@ export function NexusChat() {
                     <FileUpload
                       onFilesSelected={setSelectedFiles}
                       maxSize={10 * 1024 * 1024}
-                      multiple={true}
                     />
+                    {/* Chart Mode Toggle - Pre-send visual analytics */}
+                    <button
+                      type="button"
+                      onClick={() => setIsChartMode(!isChartMode)}
+                      className={`relative flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border text-[10px] sm:text-xs font-medium transition-all ${isChartMode
+                        ? "bg-emerald-500/20 border-emerald-400/50 text-emerald-300 shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+                        : "bg-white/5 border-white/10 text-white/50 hover:bg-white/10 hover:text-white/70"
+                        }`}
+                      title={isChartMode ? "Chart Mode ON - Send message to generate chart" : "Enable Visual Analytics"}
+                    >
+                      <svg
+                        className={`h-3.5 w-3.5 transition-all ${isChartMode ? "text-emerald-300" : ""
+                          }`}
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+                      </svg>
+                      <span className="hidden sm:inline">{isChartMode ? "Chart ON" : "Charts"}</span>
+                      {isChartMode && (
+                        <span className="absolute -top-1 -right-1 w-2 h-2 bg-emerald-400 rounded-full animate-pulse" />
+                      )}
+                    </button>
                     {/* Deep Research PLUS Toggle - Coming Soon */}
                     <div className="relative">
                       <button

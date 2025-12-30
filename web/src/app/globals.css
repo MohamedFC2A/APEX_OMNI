@@ -202,7 +202,10 @@ html[lang="ar"] * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  *, ::before, ::after {
+
+  *,
+  ::before,
+  ::after {
     animation-duration: 0.01ms !important;
     animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
@@ -312,4 +315,87 @@ nextjs-portal {
   opacity: 0.12;
   filter: blur(0.6px);
   mix-blend-mode: screen;
+}
+
+/* ============================================================================
+   LIQUID GLASS SCROLLBAR - Processing Details Panel
+   ============================================================================ */
+
+/* Liquid Glass scrollbar for pipeline panel */
+.liquid-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+
+.liquid-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.liquid-scroll::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 9999px;
+  transition: background 0.2s ease;
+}
+
+.liquid-scroll::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.25);
+}
+
+/* Processing Details Panel Animation */
+.processing-panel-enter {
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+}
+
+.processing-panel-enter-active {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+  transition: opacity 0.2s ease, transform 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.processing-panel-exit {
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.processing-panel-exit-active {
+  opacity: 0;
+  transform: translateY(12px) scale(0.98);
+  transition: opacity 0.15s ease, transform 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Status dot pulse animation */
+@keyframes status-pulse {
+
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  50% {
+    opacity: 0.6;
+    transform: scale(1.1);
+  }
+}
+
+.status-dot-pulse {
+  animation: status-pulse 1.5s ease-in-out infinite;
+}
+
+/* Pipeline stage transition */
+.pipeline-stage-transition {
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* Subtle glow for active stages */
+.stage-glow-active {
+  box-shadow: 0 0 28px rgba(34, 211, 238, 0.22);
+}
+
+.stage-glow-success {
+  box-shadow: 0 0 20px rgba(52, 211, 153, 0.18);
+}
+
+.stage-glow-failed {
+  box-shadow: 0 0 20px rgba(248, 113, 113, 0.18);
 }
