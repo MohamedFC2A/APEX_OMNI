@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
-import { Inter, JetBrains_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono, Cairo } from "next/font/google";
+import { LiquidGlassProvider } from "@/components/LiquidGlassProvider";
 import "./globals.css";
 
 const inter = Inter({
@@ -12,9 +13,15 @@ const jetBrainsMono = JetBrains_Mono({
   subsets: ["latin"],
 });
 
+const cairo = Cairo({
+  variable: "--font-ar",
+  subsets: ["arabic", "latin"],
+  weight: ["400", "600", "700"],
+});
+
 export const metadata: Metadata = {
-  title: "Apex OMNI (NEXUS)",
-  description: "Multi-Stage Hyper-Reasoning Engine",
+  title: "NEXUS AI - Made by Mohamed Matany",
+  description: "Multi-Stage Hyper-Reasoning Engine by Mohamed Matany",
 };
 
 export default function RootLayout({
@@ -23,11 +30,12 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body
-        className={`${inter.variable} ${jetBrainsMono.variable} antialiased`}
+        className={`${inter.variable} ${jetBrainsMono.variable} ${cairo.variable} antialiased`}
+        suppressHydrationWarning
       >
-        {children}
+        <LiquidGlassProvider>{children}</LiquidGlassProvider>
       </body>
     </html>
   );

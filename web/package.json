@@ -6,12 +6,15 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "clean-build": "if exist .next rmdir /s /q .next 2>nul || rm -rf .next && npm run lint && npm run typecheck && npm run build"
   },
   "dependencies": {
     "framer-motion": "^12.0.0",
     "jspdf": "^3.0.4",
     "next": "^14.2.35",
+    "next-intl": "^4.6.1",
     "openai": "^4.73.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -21,7 +24,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
-    "@types/node": "^20",
+    "@types/node": "^20.19.27",
     "@types/react": "^18",
     "@types/react-dom": "^18",
     "eslint": "^8.57.0",

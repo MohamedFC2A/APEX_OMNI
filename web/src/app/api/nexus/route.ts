@@ -1,70 +1,71 @@
 import OpenAI from "openai";
 import { NextRequest } from "next/server";
+import {
+  resolveModelId,
+  getModelsForMode,
+  normalizeRegistryMode,
+  sanitizeModelNameForUI,
+  type NexusMode as RegistryNexusMode,
+} from "@/lib/modelRegistry";
+import { getAgentIdForModel, getAggregatorAgentId, getFallbackAgentId } from "@/lib/agentRegistry";
 
-// ============================================================================
-// TRI-MODE NEXUS ENGINE CONFIGURATION - DEEPSEEK OFFICIAL API ONLY
-// ============================================================================
-// STANDARD Mode: DeepSeek V3 (deepseek-chat) - Fast, direct answers
-// THINKING Mode: DeepSeek V3 (deepseek-chat) - Deep reasoning with higher token limits
-// SUPER_THINKING Mode: DeepSeek Reasoner R1 (deepseek-reasoner) - Ultimate reasoning
-// ============================================================================
-
-type NexusMode = "STANDARD" | "THINKING" | "SUPER_THINKING";
-
-// Initialize DeepSeek API client (Official DeepSeek API only)
-const deepseek = new OpenAI({
-  baseURL: "https://api.deepseek.com",
-  apiKey: process.env.DEEPSEEK_API_KEY || "",
-});
-
-// Initialize OpenRouter client for Vision models
 const openrouter = new OpenAI({
   baseURL: "https://openrouter.ai/api/v1",
   apiKey: process.env.OPENROUTER_API_KEY || "",
 });
 
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
+const deepseek = new OpenAI({
+  baseURL: "https://api.deepseek.com",
+  apiKey: process.env.DEEPSEEK_API_KEY || "",
+});
 
-interface ChatMessage {
+type NexusMode = RegistryNexusMode;
+
+type StageStatus = "idle" | "running" | "success" | "failed" | "skipped" | "timeout";
+
+type PipelineStage = {
+  id: string;
+  name: string;
+  status: StageStatus;
+  startedAt: number | null;
+  finishedAt: number | null;
+  latencyMs: number | null;
+  detail?: string;
+};
+
+type ChatMessage = {
   role: "system" | "user" | "assistant";
   content: string;
   reasoning_content?: string;
+};
+
+const FLASH_FIRST_TOKEN_TIMEOUT_MS = 1200;
+const FLASH_MAX_STREAM_MS = 2000;
+const FLASH_MAX_TOKENS = 320;
+const THINKING_MAX_TOKENS = 2200;
+const APEX_MAX_TOKENS = 3200;
+const AGGREGATOR_MAX_TOKENS = 4200;
+
+const FLASH_SYSTEM_PROMPT =
+  "You are NEXUS Flash. Respond fast, direct, and correct. End with a section titled \"Core Synthesis Assembling\" containing exactly 2 bullet lines.";
+
+const DEEP_SYSTEM_PROMPT =
+  "You are NEXUS Deep Thinking. Provide structured reasoning and a clear answer. End with a section titled \"Core Synthesis Assembling\" containing exactly 2 bullet lines. Add a short [REASONING_PATH] list of 3 steps at the end.";
+
+const APEX_SYSTEM_PROMPT =
+  "You are NEXUS Apex. Deliver production-grade answers with structure. End with a section titled \"Core Synthesis Assembling\" containing exactly 2 bullet lines. Add a short [REASONING_PATH] list of 3 steps at the end.";
+
+const CORE_SYNTHESIS_TITLE = "Core Synthesis Assembling";
+
+const flashPool = {
+  warmed: false,
+  inflight: null as Promise<boolean> | null,
+};
+
+function normalizeMode(rawMode: string | null | undefined): NexusMode {
+  return normalizeRegistryMode(rawMode);
 }
 
-/**
- * Clean chat history for DeepSeek API
- * Strips out reasoning_content from previous turns as per DeepSeek docs
- */
-function cleanChatHistory(messages: ChatMessage[]): Omit<ChatMessage, "reasoning_content">[] {
-  return messages.map((msg) => {
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const { reasoning_content, ...cleanMsg } = msg;
-    return cleanMsg;
-  });
-}
-
-/**
- * Normalize mode from query parameter
- */
-function normalizeMode(rawMode: string | null): NexusMode {
-  const mode = (rawMode || "").trim().toLowerCase();
-
-  if (mode === "thinking" || mode === "deep" || mode === "deep-scan") {
-    return "THINKING";
-  }
-
-  if (mode === "super_thinking" || mode === "super-thinking" || mode === "coder") {
-    return "SUPER_THINKING";
-  }
-
-  return "STANDARD";
-}
-
-/**
- * Redact sensitive information from error messages
- */
 function redactSecrets(input: string): string {
   return String(input || "")
     .replace(/\b(sk-[a-zA-Z0-9_\-]{10,})\b/g, "[REDACTED]")
@@ -72,813 +73,839 @@ function redactSecrets(input: string): string {
     .replace(/\b(bb_[a-zA-Z0-9_\-]{10,})\b/g, "[REDACTED]")
     .replace(/Bearer\s+[a-zA-Z0-9_-]{20,}/gi, "Bearer [REDACTED]")
     .replace(/DEEPSEEK_API_KEY\s*=\s*[^\n]+/gi, "DEEPSEEK_API_KEY=[REDACTED]")
-    .replace(/CEREBRAS_API_KEY\s*=\s*[^\n]+/gi, "CEREBRAS_API_KEY=[REDACTED]");
+    .replace(/OPENROUTER_API_KEY\s*=\s*[^\n]+/gi, "OPENROUTER_API_KEY=[REDACTED]");
 }
 
-/**
- * Detect language from text (Arabic vs English)
- * Returns "ar" for Arabic, "en" for English
- */
 function detectLanguage(text: string): "ar" | "en" {
   if (!text || text.trim().length === 0) return "en";
-  
-  // Arabic Unicode range: U+0600 to U+06FF, U+0750 to U+077F, U+08A0 to U+08FF, U+FB50 to U+FDFF, U+FE70 to U+FEFF
   const arabicRegex = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
-  
-  // Count Arabic characters
   let arabicCount = 0;
   let totalChars = 0;
-  
   for (const char of text) {
-    if (/\S/.test(char)) { // Non-whitespace
-      totalChars++;
-      if (arabicRegex.test(char)) {
-        arabicCount++;
-      }
+    if (/\S/.test(char)) {
+      totalChars += 1;
+      if (arabicRegex.test(char)) arabicCount += 1;
     }
   }
-  
-  // If more than 30% of characters are Arabic, consider it Arabic
-  if (totalChars > 0 && arabicCount / totalChars > 0.3) {
-    return "ar";
-  }
-  
+  if (totalChars > 0 && arabicCount / totalChars > 0.3) return "ar";
   return "en";
 }
 
-/**
- * Get language instruction for system prompts
- */
 function getLanguageInstruction(lang: "ar" | "en"): string {
-  return lang === "ar" 
-    ? "IMPORTANT: Respond ONLY in Arabic. Use proper Arabic grammar and formatting."
-    : "IMPORTANT: Respond ONLY in English. Use proper English grammar and formatting.";
+  return lang === "ar"
+    ? "Respond only in Arabic."
+    : "Respond only in English.";
 }
 
-// ============================================================================
-// NEXUS SYSTEM PROMPTS
-// ============================================================================
+function parseReasoningPath(content: string): Array<{ id: string; label: string; kind: "step" }> {
+  const match = content.match(/\[REASONING_PATH\]([\s\S]*?)\[\/REASONING_PATH\]/);
+  if (!match) return [];
+  const lines = match[1]
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0 && /^[\d\-*]/.test(l))
+    .map((l) => l.replace(/^[\d\-*]\s*/, ""))
+    .slice(0, 3);
+  return lines.map((label, idx) => ({ id: String(idx + 1), label, kind: "step" as const }));
+}
 
-const NEXUS_STANDARD_PROMPT = `You are NEXUS, a powerful AI assistant. Provide clear, accurate, and helpful responses.`;
+function computeModelScore(content: string): { coverage: number; consistency: number; novelty: number } {
+  const normalized = String(content || "").replace(/\s+/g, " ").trim();
+  const length = normalized.length;
+  const words = normalized.toLowerCase().match(/[a-z0-9]+/g) || [];
+  const uniqueCount = new Set(words).size;
+  const uniqueRatio = words.length > 0 ? uniqueCount / words.length : 0;
+  const clamp01 = (n: number) => Math.max(0, Math.min(1, n));
+  return {
+    coverage: clamp01(length / 2500),
+    consistency: clamp01(0.35 + clamp01(length / 3500) * 0.65),
+    novelty: clamp01(uniqueRatio),
+  };
+}
 
-const NEXUS_THINKING_PROMPT = `You are NEXUS PRO, an advanced AI reasoning engine. Think deeply about problems before answering. Provide comprehensive, well-structured responses.`;
+function parseCoreSynthesisLines(blockBody: string): string[] {
+  return String(blockBody || "")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .map((l) => l.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, ""))
+    .slice(0, 2);
+}
 
-const NEXUS_SUPER_CODER_PROMPT = `You are NEXUS PRO 1.0, the ultimate AI coding engine.
-
-YOUR IDENTITY:
-- You are powered by DeepSeek Reasoner (R1)
-- You produce futuristic, premium-tier code
-- You never output basic or generic code
-
-CODING STANDARDS:
-1. Use modern frameworks: Next.js 14+, React 18+, TypeScript
-2. Style with Tailwind CSS gradients, glassmorphism, and Framer Motion animations
-3. Implement dark mode with cyan/fuchsia accent colors
-4. Add micro-interactions and smooth transitions
-5. Use proper TypeScript types, never 'any'
-6. Include error boundaries and loading states
-7. Follow accessibility best practices
-
-OUTPUT FORMAT:
-- Provide complete, production-ready code
-- Include all necessary imports
-- Add inline comments for complex logic
-- Structure code for maintainability`;
-
-// ============================================================================
-// NEXUS PIPELINE STEPS (matches frontend nexusStore.ts)
-// ============================================================================
-const NEXUS_STEPS = [
-  { step: 1, label: "Swarm Intelligence Aggregated" },
-  { step: 2, label: "Omni Deconstruct Engaged" },
-  { step: 3, label: "Apex Logic Filtering" },
-  { step: 4, label: "Titan Critique Initiated" },
-  { step: 5, label: "Multi-Model Parallel Execution" },
-  { step: 6, label: "Deep Verify Cross-Check" },
-  { step: 7, label: "Quantum Refine Polishing" },
-  { step: 8, label: "Matrix Format Structuring" },
-  { step: 9, label: "Final Guard Compliance" },
-  { step: 10, label: "Final Aggregation Complete" },
-];
-
-// ============================================================================
-// MAIN API ROUTE HANDLER
-// ============================================================================
-
-export async function GET(req: NextRequest) {
-  const searchParams = req.nextUrl.searchParams;
-  const userQuery = searchParams.get("query") || "";
-  const rawMode = searchParams.get("mode");
-  const mode = normalizeMode(rawMode);
-
-  console.log(`[NEXUS] GET request - Mode: ${mode}, Query length: ${userQuery.length}`);
-
-  if (!userQuery.trim()) {
-    return new Response(
-      JSON.stringify({ error: "Missing 'query' parameter" }),
-      { status: 400, headers: { "Content-Type": "application/json" } }
-    );
+function deriveCoreSynthesisLinesFromAnswer(answer: string): string[] {
+  const withoutCode = String(answer || "").replace(/```[\s\S]*?```/g, "");
+  const linesFromText = withoutCode
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l.length > 0)
+    .filter((l) => !/^#{1,6}\s+/.test(l))
+    .map((l) => l.replace(/^[-*]\s+/, "").replace(/^\d+\.\s+/, ""))
+    .slice(0, 8);
+  const sentences = withoutCode
+    .replace(/\s+/g, " ")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0)
+    .slice(0, 10);
+  const combined: string[] = [];
+  for (const l of linesFromText) {
+    if (combined.length >= 2) break;
+    combined.push(l);
   }
-
-  // Validate DeepSeek API key (required for all modes)
-  if (!process.env.DEEPSEEK_API_KEY) {
-    return new Response(
-      JSON.stringify({ error: "DEEPSEEK_API_KEY not configured" }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+  for (const s of sentences) {
+    if (combined.length >= 2) break;
+    if (combined.some((x) => x === s)) continue;
+    combined.push(s);
   }
+  const normalized = combined.map((l) => (l.length > 160 ? `${l.slice(0, 157)}...` : l)).slice(0, 2);
+  while (normalized.length < 2) normalized.push("Summary unavailable.");
+  return normalized.slice(0, 2);
+}
 
-  // Set up Server-Sent Events
-  const encoder = new TextEncoder();
-  const stream = new ReadableStream({
-    async start(controller) {
-      const sendEvent = (event: string, data: Record<string, unknown>) => {
-        const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-        controller.enqueue(encoder.encode(message));
-        console.log(`[NEXUS SSE] ${event}:`, typeof data === 'object' ? JSON.stringify(data).slice(0, 100) : data);
-      };
+function finalizeAnswerWithCoreSynthesis(answer: string): { answer: string; summary: string } {
+  const raw = String(answer || "");
+  const headingRegex = new RegExp(`(^|\\n)##\\s*${CORE_SYNTHESIS_TITLE}\\s*\\n([\\s\\S]*?)(?=\\n##\\s|\\n#\\s|$)`, "gi");
+  const matches = Array.from(raw.matchAll(headingRegex));
+  const lastMatch = matches.length > 0 ? matches[matches.length - 1] : null;
+  const existingBody = lastMatch?.[2] || "";
+  const existingLines = parseCoreSynthesisLines(existingBody);
+  const lines = (existingLines.length > 0 ? existingLines : deriveCoreSynthesisLinesFromAnswer(raw)).slice(0, 2);
+  const cleaned = raw.replace(headingRegex, "").trimEnd();
+  const block = `\n\n## ${CORE_SYNTHESIS_TITLE}\n${lines.map((l) => `- ${l}`).join("\n")}`;
+  return { answer: `${cleaned}${block}`, summary: lines.join("\n") };
+}
 
-      // Send initial connection message
-      controller.enqueue(encoder.encode(`: nexus stream open\n\n`));
-
-      // ====================================================================
-      // STEP ORCHESTRATION: Emit all 10 steps before AI engagement
-      // ====================================================================
-      sendEvent("log", { message: `Mode: ${mode.toUpperCase()}`, at: Date.now() });
-      
-      for (const { step, label } of NEXUS_STEPS) {
-        console.log(`[NEXUS] Step ${step}: ${label}`);
-        sendEvent("step_start", { step, at: Date.now() });
-        sendEvent("log", { message: `→ Step ${step}: ${label}`, at: Date.now() });
-        
-        // Brief delay to allow frontend to render each step activation
-        await new Promise(resolve => setTimeout(resolve, 50));
-        
-        // Mark steps 1-3 as completed immediately (pre-processing simulation)
-        if (step <= 3) {
-          sendEvent("step_finish", { step, status: "completed", at: Date.now() });
-        }
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  if (!Number.isFinite(ms) || ms <= 0) return promise;
+  return new Promise<T>((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (v) => {
+        clearTimeout(t);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(t);
+        reject(e);
       }
+    );
+  });
+}
 
+function isTimeoutError(error: unknown): boolean {
+  if (!error) return false;
+  const msg = error instanceof Error ? error.message : String(error);
+  return msg.toLowerCase().includes("timeout");
+}
+
+function getStatusCode(error: unknown): number | null {
+  if (!error || typeof error !== "object") return null;
+  const anyErr = error as { status?: number; response?: { status?: number } };
+  if (typeof anyErr.status === "number") return anyErr.status;
+  if (anyErr.response && typeof anyErr.response.status === "number") return anyErr.response.status;
+  return null;
+}
+
+function formatError(error: unknown, context: string): string {
+  const status = getStatusCode(error);
+  const raw = error instanceof Error ? error.message : String(error || "Unknown error");
+  const message = redactSecrets(raw);
+  if (status) return `${context} failed (HTTP ${status}): ${message}`;
+  return `${context} failed: ${message}`;
+}
+
+function buildStages(hasImages: boolean): PipelineStage[] {
+  const base: PipelineStage[] = [
+    { id: "boot", name: "Request Intake", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+    { id: "prewarm", name: "Warm Token Cache", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+    { id: "prompt", name: "Prompt Assembly", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+  ];
+  if (hasImages) {
+    base.push({ id: "vision", name: "Image Decode", status: "idle", startedAt: null, finishedAt: null, latencyMs: null });
+  }
+  base.push(
+    { id: "primary", name: "Primary Execution", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+    { id: "fallback", name: "Fallback Execution", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+    { id: "aggregate", name: "Aggregation", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+    { id: "response", name: "Response Stream", status: "idle", startedAt: null, finishedAt: null, latencyMs: null },
+    { id: "finalize", name: "Finalize Output", status: "idle", startedAt: null, finishedAt: null, latencyMs: null }
+  );
+  return base;
+}
+
+class PipelineTracker {
+  private stages: Map<string, PipelineStage>;
+  private emit: (event: string, data: Record<string, unknown>) => void;
+
+  constructor(stages: PipelineStage[], emit: (event: string, data: Record<string, unknown>) => void) {
+    this.stages = new Map(stages.map((s) => [s.id, s]));
+    this.emit = emit;
+  }
+
+  init(): void {
+    this.emit("pipeline_init", { stages: Array.from(this.stages.values()) });
+  }
+
+  start(id: string, detail?: string): void {
+    const stage = this.stages.get(id);
+    if (!stage) return;
+    if (stage.status === "running") return;
+    stage.status = "running";
+    stage.startedAt = stage.startedAt ?? Date.now();
+    stage.detail = detail;
+    this.emit("pipeline_stage", { stage });
+  }
+
+  finish(id: string, status: StageStatus, detail?: string): void {
+    const stage = this.stages.get(id);
+    if (!stage) return;
+    if (stage.status === "success" || stage.status === "failed" || stage.status === "skipped" || stage.status === "timeout") return;
+    const end = Date.now();
+    stage.status = status;
+    stage.finishedAt = end;
+    stage.latencyMs = stage.startedAt ? end - stage.startedAt : null;
+    stage.detail = detail;
+    this.emit("pipeline_stage", { stage });
+  }
+
+  skip(id: string, detail?: string): void {
+    const stage = this.stages.get(id);
+    if (!stage) return;
+    if (stage.status !== "idle") return;
+    stage.status = "skipped";
+    stage.startedAt = stage.startedAt ?? Date.now();
+    stage.finishedAt = stage.startedAt;
+    stage.latencyMs = 0;
+    stage.detail = detail;
+    this.emit("pipeline_stage", { stage });
+  }
+
+  snapshot(): PipelineStage[] {
+    return Array.from(this.stages.values());
+  }
+}
+
+async function preWarmFlashPool(): Promise<boolean> {
+  if (flashPool.warmed) return true;
+  if (flashPool.inflight) return flashPool.inflight;
+  const flashModel = resolveModelId("NEXUS_FLASH_PRO");
+  const warmPromise = openrouter.chat.completions
+    .create({
+      model: flashModel,
+      messages: [{ role: "user", content: "ping" }],
+      stream: false,
+      max_tokens: 8,
+    })
+    .then(() => {
+      flashPool.warmed = true;
+      return true;
+    })
+    .catch(() => false)
+    .finally(() => {
+      flashPool.inflight = null;
+    });
+  flashPool.inflight = warmPromise;
+  return warmPromise;
+}
+
+function sanitizeAgentLabel(agentId: string, mode: NexusMode): string {
+  if (agentId === "NEXUS_AGGREGATOR") return "Aggregator";
+  if (agentId === "NEXUS_FALLBACK") return "Fallback";
+  if (mode === "FLASH") return "Flash Lane";
+  if (mode === "DEEP_THINKING") return "Reasoning Lane";
+  if (mode === "APEX") return "Specialist Lane";
+  return "NEXUS Lane";
+}
+
+function sanitizeModelLabel(mode: NexusMode): string {
+  return sanitizeModelNameForUI(mode, mode);
+}
+
+async function runVisionStage(
+  images: Array<{ data: string; mimeType: string }>,
+  sendEvent: (event: string, data: Record<string, unknown>) => void,
+  pipeline: PipelineTracker
+): Promise<string> {
+  pipeline.start("vision", "Decoding images");
+  if (!images.length) {
+    pipeline.skip("vision", "No images provided");
+    return "";
+  }
+
+  try {
+    const visionMessages: Array<{ role: "system" | "user"; content: string | Array<{ type: "text" | "image_url"; text?: string; image_url?: { url: string } }> }> = [
+      {
+        role: "system",
+        content: "Describe the images in detail. Focus on visible text, diagrams, and technical content.",
+      },
+      {
+        role: "user",
+        content: [
+          { type: "text", text: "Describe this image." },
+          ...images.map((img) => ({ type: "image_url" as const, image_url: { url: img.data } })),
+        ],
+      },
+    ];
+
+    sendEvent("agent_start", {
+      agent: "NEXUS_VISION",
+      agentName: "Vision Lane",
+      model: "NEXUS_VISION",
+      at: Date.now(),
+    });
+
+    const visionResponse = await openrouter.chat.completions.create({
+      model: "nvidia/nemotron-nano-12b-v2-vl:free",
+      messages: visionMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
+      stream: false,
+      max_tokens: 500,
+    });
+
+    sendEvent("agent_finish", {
+      agent: "NEXUS_VISION",
+      agentName: "Vision Lane",
+      model: "NEXUS_VISION",
+      status: "completed",
+      at: Date.now(),
+    });
+
+    const description = visionResponse.choices[0]?.message?.content || "";
+    pipeline.finish("vision", "success", "Image decoded");
+    return description;
+  } catch (error) {
+    sendEvent("agent_finish", {
+      agent: "NEXUS_VISION",
+      agentName: "Vision Lane",
+      model: "NEXUS_VISION",
+      status: "failed",
+      error: formatError(error, "Vision decode"),
+      at: Date.now(),
+    });
+    pipeline.finish("vision", isTimeoutError(error) ? "timeout" : "failed", formatError(error, "Vision decode"));
+    return "";
+  }
+}
+
+async function streamCompletion(
+  response: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>,
+  sendEvent: (event: string, data: Record<string, unknown>) => void,
+  pipeline: PipelineTracker,
+  options: { firstTokenTimeoutMs: number; maxStreamMs?: number; markStageId?: string }
+): Promise<{ content: string; reasoning: string }> {
+  pipeline.start("response", "Streaming response");
+  let fullContent = "";
+  let fullReasoning = "";
+  let firstTokenAt: number | null = null;
+  let lastChunkAt = Date.now();
+
+  const iterator = response[Symbol.asyncIterator]();
+  const first = await withTimeout(iterator.next(), options.firstTokenTimeoutMs, "timeout waiting for first token");
+
+  if (!first.done) {
+    const delta = (first.value.choices[0]?.delta ?? {}) as { reasoning_content?: string; content?: string };
+    if (delta?.reasoning_content) {
+      fullReasoning += delta.reasoning_content;
+      sendEvent("thinking", { chunk: delta.reasoning_content, at: Date.now() });
+    }
+    if (delta?.content) {
+      fullContent += delta.content;
+      sendEvent("chunk", { content: delta.content, at: Date.now() });
+    }
+    firstTokenAt = Date.now();
+    if (options.markStageId) {
+      pipeline.finish(options.markStageId, "success", "First token received");
+    }
+  }
+
+  while (true) {
+    const next = await iterator.next();
+    if (next.done) break;
+    const delta = (next.value.choices[0]?.delta ?? {}) as { reasoning_content?: string; content?: string };
+    if (delta?.reasoning_content) {
+      fullReasoning += delta.reasoning_content;
+      sendEvent("thinking", { chunk: delta.reasoning_content, at: Date.now() });
+    }
+    if (delta?.content) {
+      fullContent += delta.content;
+      sendEvent("chunk", { content: delta.content, at: Date.now() });
+    }
+    lastChunkAt = Date.now();
+    if (next.value.choices[0]?.finish_reason) {
+      sendEvent("finish", { reason: next.value.choices[0].finish_reason, at: Date.now() });
+    }
+  }
+
+  const streamDuration = lastChunkAt - (firstTokenAt ?? lastChunkAt);
+  if (typeof options.maxStreamMs === "number" && streamDuration > options.maxStreamMs) {
+    pipeline.finish("response", "timeout", `Stream exceeded ${options.maxStreamMs}ms`);
+  } else {
+    pipeline.finish("response", "success", "Stream completed");
+  }
+
+  return { content: fullContent, reasoning: fullReasoning };
+}
+
+async function runFlashMode(
+  query: string,
+  baseMessages: ChatMessage[],
+  languageInstruction: string,
+  sendEvent: (event: string, data: Record<string, unknown>) => void,
+  pipeline: PipelineTracker
+): Promise<{ response: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>; modelName: NexusMode }> {
+  pipeline.start("primary", "Flash primary call");
+  pipeline.skip("aggregate", "Flash mode does not aggregate");
+  pipeline.skip("fallback", "Flash mode uses primary model only");
+
+  preWarmFlashPool().then((ok) => {
+    if (ok) {
+      pipeline.finish("prewarm", "success", "Flash pool warmed");
+    } else {
+      pipeline.finish("prewarm", "failed", "Flash pool warm failed");
+    }
+  });
+
+  const providerModel = resolveModelId("NEXUS_FLASH_PRO");
+  const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+    { role: "system", content: `${FLASH_SYSTEM_PROMPT} ${languageInstruction}` },
+    ...baseMessages.map((m) => ({ role: m.role, content: m.content })),
+    { role: "user", content: query },
+  ];
+
+  const agentId = getAgentIdForModel("NEXUS_FLASH_PRO", "FLASH");
+  sendEvent("agent_start", {
+    agent: agentId,
+    agentName: sanitizeAgentLabel(agentId, "FLASH"),
+    model: sanitizeModelLabel("FLASH"),
+    at: Date.now(),
+  });
+
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: providerModel,
+      messages,
+      stream: true,
+      max_tokens: FLASH_MAX_TOKENS,
+      temperature: 0.6,
+    });
+
+    sendEvent("agent_finish", {
+      agent: agentId,
+      agentName: sanitizeAgentLabel(agentId, "FLASH"),
+      model: sanitizeModelLabel("FLASH"),
+      status: "completed",
+      at: Date.now(),
+    });
+
+    return { response, modelName: "FLASH" };
+  } catch (error) {
+    const errorMessage = formatError(error, "Flash model");
+    sendEvent("agent_finish", {
+      agent: agentId,
+      agentName: sanitizeAgentLabel(agentId, "FLASH"),
+      model: sanitizeModelLabel("FLASH"),
+      status: "failed",
+      error: errorMessage,
+      at: Date.now(),
+    });
+    pipeline.finish("primary", isTimeoutError(error) ? "timeout" : "failed", errorMessage);
+    throw new Error(errorMessage);
+  }
+}
+
+async function runParallelModels(
+  mode: NexusMode,
+  query: string,
+  baseMessages: ChatMessage[],
+  languageInstruction: string,
+  sendEvent: (event: string, data: Record<string, unknown>) => void,
+  pipeline: PipelineTracker
+): Promise<Array<{ id: string; agentId: string; agentLabel: string; content: string }>> {
+  pipeline.start("primary", "Parallel execution");
+  const modelDefs = getModelsForMode(mode);
+  const tasks = modelDefs.map((modelDef, index) => {
+    const agentId = getAgentIdForModel(modelDef.id, mode, index);
+    const agentLabel = sanitizeAgentLabel(agentId, mode);
+    const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
+      {
+        role: "system",
+        content: `${mode === "APEX" ? APEX_SYSTEM_PROMPT : DEEP_SYSTEM_PROMPT} ${languageInstruction}`,
+      },
+      ...baseMessages.map((m) => ({ role: m.role, content: m.content })),
+      { role: "user", content: query },
+    ];
+
+    return (async () => {
+      sendEvent("agent_start", {
+        agent: agentId,
+        agentName: agentLabel,
+        model: sanitizeModelLabel(mode),
+        at: Date.now(),
+      });
+
+      const started = Date.now();
       try {
-        let response: OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
-        let modelName = "";
-        let displayName = "";
-
-        // ====================================================================
-        // MODE ROUTING: Select the appropriate NEXUS engine
-        // ====================================================================
-
-        if (mode === "STANDARD") {
-          // ⚡ DEEPSEEK V3 - Fast, direct answers
-          modelName = "deepseek-chat";
-          displayName = "Nexus Pro Lite";
-
-          console.log(`[NEXUS] Engaging DeepSeek V3: ${modelName}`);
-          sendEvent("agent_start", {
-            agent: "nexus_fast",
-            agentName: displayName,
-            model: modelName,
-            at: Date.now()
-          });
-          sendEvent("log", { message: `Engaging: ${displayName}`, at: Date.now() });
-
-          const messages: ChatMessage[] = [
-            { role: "system", content: NEXUS_STANDARD_PROMPT },
-            { role: "user", content: userQuery },
-          ];
-
-          response = await deepseek.chat.completions.create({
-            model: modelName,
-            messages: cleanChatHistory(messages) as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-            stream: true,
-            max_tokens: 2000,
+        const response = await withTimeout(
+          openrouter.chat.completions.create({
+            model: modelDef.model,
+            messages,
+            stream: false,
+            max_tokens: mode === "APEX" ? APEX_MAX_TOKENS : THINKING_MAX_TOKENS,
             temperature: 0.7,
-          });
+          }),
+          modelDef.timeoutMs,
+          "timeout"
+        );
 
-          sendEvent("agent_finish", {
-            agent: "nexus_fast",
-            agentName: displayName,
-            model: modelName,
-            status: "completed",
-            at: Date.now()
-          });
+        const content = response.choices[0]?.message?.content || "";
+        if (!content) throw new Error("Model returned empty content");
 
-        } else if (mode === "THINKING") {
-          // 🧠 DEEPSEEK V3 (deepseek-chat) - Deep reasoning
-          modelName = "deepseek-chat";
-          displayName = "Nexus Pro Lite";
-
-          console.log(`[NEXUS] Engaging DeepSeek V3: ${modelName}`);
-          sendEvent("agent_start", {
-            agent: "nexus_pro",
-            agentName: displayName,
-            model: modelName,
-            at: Date.now()
-          });
-          sendEvent("log", { message: `Engaging: ${displayName}`, at: Date.now() });
-
-          const messages: ChatMessage[] = [
-            { role: "system", content: NEXUS_THINKING_PROMPT },
-            { role: "user", content: userQuery },
-          ];
-
-          response = await deepseek.chat.completions.create({
-            model: modelName,
-            messages: cleanChatHistory(messages) as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-            stream: true,
-            max_tokens: 4000,
-            temperature: 0.7,
-          });
-
-          sendEvent("agent_finish", {
-            agent: "nexus_pro",
-            agentName: displayName,
-            model: modelName,
-            status: "completed",
-            at: Date.now()
-          });
-
-        } else {
-          // 💎 DEEPSEEK REASONER R1 - Ultimate reasoning (NO temperature/top_p!)
-          // This is SUPER_THINKING mode
-          modelName = "deepseek-reasoner";
-          displayName = "Nexus Pro R1";
-
-          console.log(`[NEXUS] Engaging DeepSeek Reasoner R1: ${modelName}`);
-          sendEvent("agent_start", {
-            agent: "nexus_pro_1",
-            agentName: displayName,
-            model: modelName,
-            at: Date.now()
-          });
-          sendEvent("log", { message: `Engaging: ${displayName}`, at: Date.now() });
-
-          const messages: ChatMessage[] = [
-            { role: "system", content: NEXUS_SUPER_CODER_PROMPT },
-            { role: "user", content: userQuery },
-          ];
-
-          // CRITICAL: deepseek-reasoner does NOT accept temperature or top_p
-          response = await deepseek.chat.completions.create({
-            model: modelName,
-            messages: cleanChatHistory(messages) as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-            stream: true,
-            max_tokens: 8000,
-            // NO temperature - causes 400 error with deepseek-reasoner
-            // NO top_p - causes 400 error with deepseek-reasoner
-          });
-
-          sendEvent("agent_finish", {
-            agent: "nexus_pro_1",
-            agentName: displayName,
-            model: modelName,
-            status: "completed",
-            at: Date.now()
+        const reasoningPath = parseReasoningPath(content);
+        if (reasoningPath.length > 0) {
+          sendEvent("reasoning_path", {
+            agent: agentId,
+            agentName: agentLabel,
+            model: sanitizeModelLabel(mode),
+            pathId: `${agentId}-path`,
+            nodes: reasoningPath,
+            at: Date.now(),
           });
         }
-
-        // Complete step 4 (Titan Critique) before AI streaming starts
-        sendEvent("step_finish", { step: 4, status: "completed", at: Date.now() });
-
-        // ====================================================================
-        // STREAMING RESPONSE HANDLER WITH PROGRESSIVE STEP COMPLETION
-        // ====================================================================
-
-        let fullContent = "";
-        let fullReasoning = "";
-        let chunkCount = 0;
-
-        console.log(`[NEXUS] Starting stream processing...`);
-
-        for await (const chunk of response) {
-          const delta = chunk.choices[0]?.delta;
-
-          if (!delta) continue;
-
-          chunkCount++;
-
-          // Progressive step completion during streaming (steps 5-9)
-          if (chunkCount === 5) {
-            sendEvent("step_finish", { step: 5, status: "completed", at: Date.now() });
-          } else if (chunkCount === 15) {
-            sendEvent("step_finish", { step: 6, status: "completed", at: Date.now() });
-          } else if (chunkCount === 30) {
-            sendEvent("step_finish", { step: 7, status: "completed", at: Date.now() });
-          } else if (chunkCount === 50) {
-            sendEvent("step_finish", { step: 8, status: "completed", at: Date.now() });
-          } else if (chunkCount === 80) {
-            sendEvent("step_finish", { step: 9, status: "completed", at: Date.now() });
-          }
-
-          // Handle reasoning content (for deepseek-reasoner - stream as thinking)
-          // DeepSeek extends OpenAI's delta with reasoning_content
-          const extendedDelta = delta as typeof delta & { reasoning_content?: string };
-          if (extendedDelta.reasoning_content) {
-            fullReasoning += extendedDelta.reasoning_content;
-            sendEvent("thinking", {
-              chunk: extendedDelta.reasoning_content,
-              at: Date.now(),
-            });
-          }
-
-          // Handle final content
-          if (extendedDelta.content) {
-            fullContent += extendedDelta.content;
-            sendEvent("chunk", {
-              content: extendedDelta.content,
-              at: Date.now(),
-            });
-          }
-
-          // Check for completion
-          if (chunk.choices[0]?.finish_reason) {
-            sendEvent("finish", {
-              reason: chunk.choices[0].finish_reason,
-              at: Date.now(),
-            });
-          }
-        }
-
-        console.log(`[NEXUS] Stream complete. Content length: ${fullContent.length}, Reasoning length: ${fullReasoning.length}`);
-
-        // Complete final step (Absolute Truth Revealed)
-        sendEvent("step_finish", { step: 10, status: "completed", at: Date.now() });
-
-        // Send final completion event
-        sendEvent("done", {
-          answer: fullContent,
-          reasoning: fullReasoning || undefined,
-          model: displayName,
-          mode: mode,
+        sendEvent("model_score", {
+          agent: agentId,
+          agentName: agentLabel,
+          model: sanitizeModelLabel(mode),
+          signals: computeModelScore(content),
           at: Date.now(),
         });
 
-        controller.close();
-      } catch (error: unknown) {
-        console.error(`[NEXUS ERROR]`, error);
-        const errorMessage = redactSecrets(error instanceof Error ? error.message : "Unknown error");
-        sendEvent("step_finish", { step: 1, status: "error", message: errorMessage, at: Date.now() });
-        sendEvent("error", {
-          message: errorMessage,
+        sendEvent("agent_finish", {
+          agent: agentId,
+          agentName: agentLabel,
+          model: sanitizeModelLabel(mode),
+          status: "completed",
+          durationMs: Date.now() - started,
           at: Date.now(),
         });
-        controller.close();
+
+        return { id: modelDef.id, agentId, agentLabel, content };
+      } catch (error) {
+        const errorMessage = formatError(error, "Model execution");
+        sendEvent("agent_finish", {
+          agent: agentId,
+          agentName: agentLabel,
+          model: sanitizeModelLabel(mode),
+          status: "failed",
+          error: errorMessage,
+          durationMs: Date.now() - started,
+          at: Date.now(),
+        });
+        return { id: modelDef.id, agentId, agentLabel, content: "" };
       }
-    },
+    })();
   });
 
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-      "X-Accel-Buffering": "no",
-    },
-  });
+  const results = await Promise.all(tasks);
+  const valid = results.filter((r) => r.content && r.content.length > 0);
+  if (valid.length > 0) {
+    pipeline.finish("primary", "success", `${valid.length}/${results.length} models succeeded`);
+  } else {
+    pipeline.finish("primary", "failed", "All primary models failed");
+  }
+  return valid;
 }
 
-// ============================================================================
-// POST ENDPOINT (Alternative for complex requests with history)
-// ============================================================================
+async function runAggregator(
+  mode: NexusMode,
+  query: string,
+  responses: Array<{ agentLabel: string; content: string }>,
+  languageInstruction: string,
+  sendEvent: (event: string, data: Record<string, unknown>) => void,
+  pipeline: PipelineTracker,
+  deepResearchPlus: boolean,
+  webMax: boolean
+): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
+  pipeline.start("aggregate", "Aggregating responses");
+
+  const aggregatorPrompt = [
+    "You are the final aggregator. Synthesize the best possible answer by:",
+    "1. Combining the strongest reasoning",
+    "2. Removing contradictions",
+    "3. Returning a clean, structured response",
+    `4. End with a section titled \"${CORE_SYNTHESIS_TITLE}\" containing exactly 2 bullet lines.`,
+    "",
+    `User Question: ${query}`,
+    "",
+    "Model Responses:",
+    ...responses.map((r, i) => `\n[Agent ${i + 1}: ${r.agentLabel}]\n${r.content}`),
+  ].join("\n");
+
+  const useDeepSeek = Boolean(deepResearchPlus || webMax);
+  const aggregatorAgentId = getAggregatorAgentId();
+  sendEvent("agent_start", {
+    agent: aggregatorAgentId,
+    agentName: "Aggregator",
+    model: sanitizeModelLabel(mode),
+    at: Date.now(),
+  });
+
+  try {
+    const response = useDeepSeek
+      ? await deepseek.chat.completions.create({
+          model: "deepseek-chat",
+          messages: [
+            { role: "system", content: `You are the final aggregator. ${languageInstruction}` },
+            { role: "user", content: aggregatorPrompt },
+          ],
+          stream: true,
+          max_tokens: AGGREGATOR_MAX_TOKENS,
+          temperature: 0.5,
+        })
+      : await openrouter.chat.completions.create({
+          model: resolveModelId("NEXUS_FLASH_PRO"),
+          messages: [
+            { role: "system", content: `You are the final aggregator. ${languageInstruction}` },
+            { role: "user", content: aggregatorPrompt },
+          ],
+          stream: true,
+          max_tokens: AGGREGATOR_MAX_TOKENS,
+          temperature: 0.5,
+        });
+
+    sendEvent("agent_finish", {
+      agent: aggregatorAgentId,
+      agentName: "Aggregator",
+      model: sanitizeModelLabel(mode),
+      status: "completed",
+      at: Date.now(),
+    });
+
+    pipeline.finish("aggregate", "success", "Aggregation streaming");
+    return response;
+  } catch (error) {
+    const errorMessage = formatError(error, "Aggregator");
+    sendEvent("agent_finish", {
+      agent: aggregatorAgentId,
+      agentName: "Aggregator",
+      model: sanitizeModelLabel(mode),
+      status: "failed",
+      error: errorMessage,
+      at: Date.now(),
+    });
+    pipeline.finish("aggregate", isTimeoutError(error) ? "timeout" : "failed", errorMessage);
+    throw error;
+  }
+}
+
+async function runFallback(
+  mode: NexusMode,
+  query: string,
+  baseMessages: ChatMessage[],
+  languageInstruction: string,
+  sendEvent: (event: string, data: Record<string, unknown>) => void,
+  pipeline: PipelineTracker
+): Promise<AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>> {
+  pipeline.start("fallback", "Fallback execution");
+
+  const fallbackAgentId = getFallbackAgentId();
+  sendEvent("agent_start", {
+    agent: fallbackAgentId,
+    agentName: "Fallback",
+    model: sanitizeModelLabel(mode),
+    at: Date.now(),
+  });
+
+  try {
+    const response = await openrouter.chat.completions.create({
+      model: resolveModelId("NEXUS_FLASH_PRO"),
+      messages: [
+        { role: "system", content: `${FLASH_SYSTEM_PROMPT} ${languageInstruction}` },
+        ...baseMessages.map((m) => ({ role: m.role, content: m.content })),
+        { role: "user", content: query },
+      ],
+      stream: true,
+      max_tokens: FLASH_MAX_TOKENS,
+      temperature: 0.6,
+    });
+
+    sendEvent("agent_finish", {
+      agent: fallbackAgentId,
+      agentName: "Fallback",
+      model: sanitizeModelLabel(mode),
+      status: "completed",
+      at: Date.now(),
+    });
+
+    pipeline.finish("fallback", "success", "Fallback streaming");
+    return response;
+  } catch (error) {
+    const errorMessage = formatError(error, "Fallback model");
+    sendEvent("agent_finish", {
+      agent: fallbackAgentId,
+      agentName: "Fallback",
+      model: sanitizeModelLabel(mode),
+      status: "failed",
+      error: errorMessage,
+      at: Date.now(),
+    });
+    pipeline.finish("fallback", isTimeoutError(error) ? "timeout" : "failed", errorMessage);
+    throw new Error(errorMessage);
+  }
+}
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { query, mode: rawMode, history = [], images = [] } = body;
-
-    console.log(`[NEXUS] POST request - Mode: ${rawMode}, Query length: ${query?.length || 0}, Images: ${images?.length || 0}`);
+    const {
+      query,
+      mode: rawMode,
+      history = [],
+      images = [],
+      deepResearchPlus = false,
+      webMax = false,
+    } = body;
 
     if (!query || typeof query !== "string") {
-      return new Response(
-        JSON.stringify({ error: "Missing or invalid 'query' field" }),
-        { status: 400, headers: { "Content-Type": "application/json" } }
-      );
+      return new Response(JSON.stringify({ error: "Missing or invalid 'query' field" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    if (!process.env.OPENROUTER_API_KEY) {
+      return new Response(JSON.stringify({ error: "OPENROUTER_API_KEY not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+    if ((deepResearchPlus || webMax) && !process.env.DEEPSEEK_API_KEY) {
+      return new Response(JSON.stringify({ error: "DEEPSEEK_API_KEY not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
     }
 
     const mode = normalizeMode(rawMode);
     const hasImages = Array.isArray(images) && images.length > 0;
 
-    // Validate DeepSeek API key (required for all modes)
-    if (!process.env.DEEPSEEK_API_KEY) {
-      return new Response(
-        JSON.stringify({ error: "DEEPSEEK_API_KEY not configured" }),
-        { status: 500, headers: { "Content-Type": "application/json" } }
-      );
-    }
-
-    // Set up Server-Sent Events
     const encoder = new TextEncoder();
     const stream = new ReadableStream({
       async start(controller) {
+        const runId =
+          typeof crypto !== "undefined" && "randomUUID" in crypto
+            ? crypto.randomUUID()
+            : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
         const sendEvent = (event: string, data: Record<string, unknown>) => {
-          const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+          const at = typeof data.at === "number" ? (data.at as number) : Date.now();
+          const payload = { ...data, runId, mode, at };
+          const message = `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
           controller.enqueue(encoder.encode(message));
-          console.log(`[NEXUS SSE] ${event}:`, typeof data === 'object' ? JSON.stringify(data).slice(0, 100) : data);
         };
 
-        controller.enqueue(encoder.encode(`: nexus stream open\n\n`));
-        
-        // ====================================================================
-        // STEP ORCHESTRATION: Emit all 10 steps before AI engagement
-        // ====================================================================
-        sendEvent("log", { message: `Mode: ${mode.toUpperCase()}`, at: Date.now() });
-        
-        for (const { step, label } of NEXUS_STEPS) {
-          console.log(`[NEXUS] Step ${step}: ${label}`);
-          sendEvent("step_start", { step, at: Date.now() });
-          sendEvent("log", { message: `→ Step ${step}: ${label}`, at: Date.now() });
-          
-          // Brief delay to allow frontend to render each step activation
-          await new Promise(resolve => setTimeout(resolve, 50));
-          
-          // Mark steps 1-3 as completed immediately (pre-processing simulation)
-          if (step <= 3) {
-            sendEvent("step_finish", { step, status: "completed", at: Date.now() });
+        const pipeline = new PipelineTracker(buildStages(hasImages), sendEvent);
+        pipeline.init();
+
+        sendEvent("run_start", {
+          queryLength: query.length,
+          hasImages,
+          mode,
+          at: Date.now(),
+        });
+
+        pipeline.start("boot", "Request accepted");
+        pipeline.finish("boot", "success", "Intake complete");
+        if (mode === "FLASH") {
+          pipeline.start("prewarm", "Warm cache");
+        } else {
+          pipeline.skip("prewarm", "Prewarm not required");
+        }
+
+        const userLanguage = detectLanguage(query);
+        const languageInstruction = getLanguageInstruction(userLanguage);
+
+        pipeline.start("prompt", "Building messages");
+        const trimmedHistory = Array.isArray(history)
+          ? history.slice(-6).map((h: { role: string; content: string }) => ({
+              role: h.role as ChatMessage["role"],
+              content: String(h.content || ""),
+            }))
+          : [];
+        pipeline.finish("prompt", "success", "Prompt ready");
+
+        let textQuery = query;
+        if (hasImages) {
+          const description = await runVisionStage(images, sendEvent, pipeline);
+          if (description) {
+            textQuery = `${query}\n\n[Image Description]\n${description}`;
           }
         }
 
         try {
-          let response: OpenAI.Chat.Completions.ChatCompletion | AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk>;
-          let modelName = "";
-          let displayName = "";
+          let response: AsyncIterable<OpenAI.Chat.Completions.ChatCompletionChunk> | null = null;
+          let modelName: NexusMode = mode;
 
-          // Detect user language from query
-          const userLanguage = detectLanguage(query);
-          const languageInstruction = getLanguageInstruction(userLanguage);
-
-          // Build base messages with history
-          const baseMessages: ChatMessage[] = [
-            ...history.map((h: { role: string; content: string }) => ({ role: h.role as ChatMessage["role"], content: h.content })),
-          ];
-
-          // Build user message with images if present
-          let userMessageContent: string | Array<{ type: "text" | "image_url"; text?: string; image_url?: { url: string } }> = query;
-          if (hasImages) {
-            userMessageContent = [
-              { type: "text" as const, text: query },
-              ...images.map((img: { data: string; mimeType: string }) => ({
-                type: "image_url" as const,
-                image_url: { url: img.data },
-              })),
-            ];
-          }
-
-          if (mode === "STANDARD") {
-            // STANDARD MODE: Run 5 OpenRouter models in parallel, then aggregate
-            const standardModels = [
-              { id: "mimo_v2", name: "Mimo V2 Flash", model: "xiaomi/mimo-v2-flash:free" },
-              { id: "devstral", name: "Devstral 2512", model: "mistralai/devstral-2512:free" },
-              { id: "deepseek_nex", name: "DeepSeek V3.1 NEX", model: "nex-agi/deepseek-v3.1-nex-n1:free" },
-              { id: "olmo_think", name: "OLMo 3.1 32B Think", model: "allenai/olmo-3.1-32b-think:free" },
-              { id: "gpt_oss_20b", name: "GPT-OSS 20B", model: "openai/gpt-oss-20b:free" },
-            ];
-
-            // Handle images: use nemotron to describe, then feed description to other models
-            let textQuery = query;
-            if (hasImages) {
-              sendEvent("agent_start", { agent: "nemotron_vision", agentName: "Nemotron Vision", model: "nvidia/nemotron-nano-12b-v2-vl:free", at: Date.now() });
-              
-              const visionMessages: Array<{ role: "system" | "user"; content: string | Array<{ type: "text" | "image_url"; text?: string; image_url?: { url: string } }> }> = [
-                { role: "system", content: "Describe the images in detail. Focus on what is visible, any text, objects, people, or important details." },
-                { role: "user" as const, content: userMessageContent },
-              ];
-
-              const visionResponse = await openrouter.chat.completions.create({
-                model: "nvidia/nemotron-nano-12b-v2-vl:free",
-                messages: visionMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-                stream: false,
-                max_tokens: 500,
-              });
-
-              const imageDescription = visionResponse.choices[0]?.message?.content || "";
-              textQuery = `${query}\n\n[Image Description: ${imageDescription}]`;
-              sendEvent("agent_finish", { agent: "nemotron_vision", agentName: "Nemotron Vision", model: "nvidia/nemotron-nano-12b-v2-vl:free", status: "completed", at: Date.now() });
-            }
-
-            // Run all models in parallel
-            sendEvent("step_finish", { step: 4, status: "completed", at: Date.now() });
-            sendEvent("step_start", { step: 5, at: Date.now() });
-            sendEvent("log", { message: "Running 5 models in parallel...", at: Date.now() });
-
-            const modelMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-              { role: "system", content: `${NEXUS_STANDARD_PROMPT}\n\n${languageInstruction}` },
-              ...baseMessages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
-              { role: "user" as const, content: textQuery },
-            ];
-
-            const modelPromises = standardModels.map(async (modelDef) => {
-              sendEvent("agent_start", { agent: modelDef.id, agentName: modelDef.name, model: modelDef.model, at: Date.now() });
-              try {
-                const modelResponse = await openrouter.chat.completions.create({
-                  model: modelDef.model,
-                  messages: modelMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-                  stream: false,
-                  max_tokens: 2000,
-                  temperature: 0.7,
-                });
-                const content = modelResponse.choices[0]?.message?.content || "";
-                sendEvent("agent_finish", { agent: modelDef.id, agentName: modelDef.name, model: modelDef.model, status: "completed", at: Date.now() });
-                return { model: modelDef.name, content, id: modelDef.id };
-              } catch (error) {
-                sendEvent("agent_finish", { agent: modelDef.id, agentName: modelDef.name, model: modelDef.model, status: "failed", error: error instanceof Error ? error.message : "Unknown error", at: Date.now() });
-                return { model: modelDef.name, content: "", id: modelDef.id };
-              }
-            });
-
-            const modelResults = await Promise.all(modelPromises);
-            const validResults = modelResults.filter(r => r.content);
-
-            sendEvent("step_finish", { step: 5, status: "completed", at: Date.now() });
-            sendEvent("step_start", { step: 6, at: Date.now() });
-            sendEvent("log", { message: `Aggregating responses from ${validResults.length} successful models...`, at: Date.now() });
-
-            // Fallback if all models failed
-            if (validResults.length === 0) {
-              sendEvent("log", { message: "All models failed, using fallback model...", at: Date.now() });
-              sendEvent("agent_start", { agent: "fallback", agentName: "Devstral 2512 (Fallback)", model: "mistralai/devstral-2512:free", at: Date.now() });
-              
-              const fallbackResponse = await openrouter.chat.completions.create({
-                model: "mistralai/devstral-2512:free",
-                messages: modelMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-                stream: true,
-                max_tokens: 2000,
-                temperature: 0.7,
-              });
-              
-              sendEvent("agent_finish", { agent: "fallback", agentName: "Devstral 2512 (Fallback)", model: "mistralai/devstral-2512:free", status: "completed", at: Date.now() });
-              response = fallbackResponse;
-              modelName = "mistralai/devstral-2512:free";
-              displayName = "Devstral 2512 (Fallback)";
-            } else {
-              // FINAL AGGREGATOR for STANDARD - Using DeepSeek V3.1 NEX
-              const aggregatorPrompt = `You are a final aggregator AI. You have received responses from multiple AI models for the same question. Your task is to synthesize the best answer by:
-1. Combining the most accurate and relevant information from all responses
-2. Removing redundancy and contradictions
-3. Presenting a clear, comprehensive, and well-structured final answer in professional Markdown format
-4. If models disagree, choose the most logical and well-reasoned response
-5. Use bold headers (##), structured bullet points, and chronological/thematic flow when appropriate
-6. End with a "Key Takeaways" section summarizing the most important points
-7. DO NOT include phrases like "This synthesis integrates..." or similar filler. Get straight to the value.
-
-User Question: ${query}
-
-Model Responses:
-${validResults.map((r, i) => `\n[Model ${i + 1}: ${r.model}]\n${r.content}`).join("\n\n---\n")}
-
-Provide the final aggregated answer in ${userLanguage === "ar" ? "Arabic" : "English"} using professional Markdown formatting:`;
-
-              sendEvent("agent_start", { agent: "final_aggregator", agentName: "Final Aggregator", model: "nex-agi/deepseek-v3.1-nex-n1:free", at: Date.now() });
-
-              const aggregatorResponse = await openrouter.chat.completions.create({
-                model: "nex-agi/deepseek-v3.1-nex-n1:free",
-                messages: [
-                  { role: "system", content: `You are an expert aggregator that synthesizes multiple AI responses into the best possible answer. ${languageInstruction}` },
-                  { role: "user", content: aggregatorPrompt },
-                ],
-                stream: true,
-                max_tokens: 3000,
-                temperature: 0.5,
-              });
-
-              sendEvent("agent_finish", { agent: "final_aggregator", agentName: "Final Aggregator", model: "nex-agi/deepseek-v3.1-nex-n1:free", status: "completed", at: Date.now() });
-              response = aggregatorResponse;
-              modelName = "nex-agi/deepseek-v3.1-nex-n1:free";
-              displayName = "Final Aggregator";
-            }
-
-          } else if (mode === "THINKING") {
-            // Use Vision model if images are present
-            if (hasImages) {
-              modelName = "nvidia/nemotron-nano-12b-v2-vl:free";
-              displayName = "Nemotron Vision";
-            } else {
-              modelName = "deepseek-chat";
-              displayName = "Nexus Pro Lite";
-            }
-
-            sendEvent("agent_start", { agent: hasImages ? "nemotron_vision" : "nexus_pro", agentName: displayName, model: modelName, at: Date.now() });
-            sendEvent("log", { message: `Engaging: ${displayName}`, at: Date.now() });
-
-            const messages: Array<{ role: "system" | "user" | "assistant"; content: string | Array<{ type: "text" | "image_url"; text?: string; image_url?: { url: string } }> }> = [
-              { role: "system", content: `${NEXUS_THINKING_PROMPT}\n\n${languageInstruction}` },
-              ...baseMessages.map(m => ({ role: m.role, content: m.content })),
-              { role: "user" as const, content: userMessageContent },
-            ];
-
-            // Use OpenRouter for Vision model, DeepSeek for text
-            const client = hasImages ? openrouter : deepseek;
-            response = await client.chat.completions.create({
-              model: modelName,
-              messages: messages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-              stream: true,
-              max_tokens: 4000,
-              temperature: 0.7,
-            });
-
-            sendEvent("agent_finish", { agent: hasImages ? "nemotron_vision" : "nexus_pro", agentName: displayName, model: modelName, status: "completed", at: Date.now() });
-
+          if (mode === "FLASH") {
+            const flash = await runFlashMode(textQuery, trimmedHistory, languageInstruction, sendEvent, pipeline);
+            response = flash.response;
+            modelName = flash.modelName;
           } else {
-            // SUPER CODER MODE: Run 5 standard models + 2 coder models in parallel, then aggregate
-            const standardModels = [
-              { id: "mimo_v2", name: "Mimo V2 Flash", model: "xiaomi/mimo-v2-flash:free" },
-              { id: "devstral", name: "Devstral 2512", model: "mistralai/devstral-2512:free" },
-              { id: "deepseek_nex", name: "DeepSeek V3.1 NEX", model: "nex-agi/deepseek-v3.1-nex-n1:free" },
-              { id: "olmo_think", name: "OLMo 3.1 32B Think", model: "allenai/olmo-3.1-32b-think:free" },
-              { id: "gpt_oss_20b", name: "GPT-OSS 20B", model: "openai/gpt-oss-20b:free" },
-            ];
-            const coderModels = [
-              { id: "qwen_coder", name: "Qwen3 Coder", model: "qwen/qwen3-coder:free" },
-              { id: "kat_coder", name: "Kat Coder Pro", model: "kwaipilot/kat-coder-pro:free" },
-            ];
-            const allModels = [...standardModels, ...coderModels];
-
-            // Handle images: use nemotron to describe, then feed description to other models
-            let textQuery = query;
-            if (hasImages) {
-              sendEvent("agent_start", { agent: "nemotron_vision", agentName: "Nemotron Vision", model: "nvidia/nemotron-nano-12b-v2-vl:free", at: Date.now() });
-              
-              const visionMessages: Array<{ role: "system" | "user"; content: string | Array<{ type: "text" | "image_url"; text?: string; image_url?: { url: string } }> }> = [
-                { role: "system", content: "Describe the images in detail, especially any code, diagrams, or technical content." },
-                { role: "user" as const, content: userMessageContent },
-              ];
-
-              const visionResponse = await openrouter.chat.completions.create({
-                model: "nvidia/nemotron-nano-12b-v2-vl:free",
-                messages: visionMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-                stream: false,
-                max_tokens: 500,
-              });
-
-              const imageDescription = visionResponse.choices[0]?.message?.content || "";
-              textQuery = `${query}\n\n[Image Description: ${imageDescription}]`;
-              sendEvent("agent_finish", { agent: "nemotron_vision", agentName: "Nemotron Vision", model: "nvidia/nemotron-nano-12b-v2-vl:free", status: "completed", at: Date.now() });
-            }
-
-            // Run all models in parallel
-            sendEvent("step_finish", { step: 4, status: "completed", at: Date.now() });
-            sendEvent("step_start", { step: 5, at: Date.now() });
-            sendEvent("log", { message: "Running 7 models in parallel (5 standard + 2 coder)...", at: Date.now() });
-
-            const modelMessages: Array<{ role: "system" | "user" | "assistant"; content: string }> = [
-              { role: "system", content: `${NEXUS_SUPER_CODER_PROMPT}\n\n${languageInstruction}` },
-              ...baseMessages.map(m => ({ role: m.role, content: typeof m.content === "string" ? m.content : "" })),
-              { role: "user" as const, content: textQuery },
-            ];
-
-            const modelPromises = allModels.map(async (modelDef) => {
-              sendEvent("agent_start", { agent: modelDef.id, agentName: modelDef.name, model: modelDef.model, at: Date.now() });
-              try {
-                const modelResponse = await openrouter.chat.completions.create({
-                  model: modelDef.model,
-                  messages: modelMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-                  stream: false,
-                  max_tokens: 4000,
-                  temperature: 0.7,
-                });
-                const content = modelResponse.choices[0]?.message?.content || "";
-                sendEvent("agent_finish", { agent: modelDef.id, agentName: modelDef.name, model: modelDef.model, status: "completed", at: Date.now() });
-                return { model: modelDef.name, content, id: modelDef.id };
-              } catch (error) {
-                sendEvent("agent_finish", { agent: modelDef.id, agentName: modelDef.name, model: modelDef.model, status: "failed", error: error instanceof Error ? error.message : "Unknown error", at: Date.now() });
-                return { model: modelDef.name, content: "", id: modelDef.id };
-              }
-            });
-
-            const modelResults = await Promise.all(modelPromises);
-            const validResults = modelResults.filter(r => r.content);
-
-            sendEvent("step_finish", { step: 5, status: "completed", at: Date.now() });
-            sendEvent("step_start", { step: 6, at: Date.now() });
-            sendEvent("log", { message: `Aggregating responses from ${validResults.length} successful models...`, at: Date.now() });
-
-            // Fallback if all models failed
-            if (validResults.length === 0) {
-              sendEvent("log", { message: "All models failed, using fallback model...", at: Date.now() });
-              sendEvent("agent_start", { agent: "fallback", agentName: "Devstral 2512 (Fallback)", model: "mistralai/devstral-2512:free", at: Date.now() });
-              
-              const fallbackResponse = await openrouter.chat.completions.create({
-                model: "mistralai/devstral-2512:free",
-                messages: modelMessages as OpenAI.Chat.Completions.ChatCompletionMessageParam[],
-                stream: true,
-                max_tokens: 4000,
-                temperature: 0.7,
-              });
-              
-              sendEvent("agent_finish", { agent: "fallback", agentName: "Devstral 2512 (Fallback)", model: "mistralai/devstral-2512:free", status: "completed", at: Date.now() });
-              response = fallbackResponse;
-              modelName = "mistralai/devstral-2512:free";
-              displayName = "Devstral 2512 (Fallback)";
+            const results = await runParallelModels(mode, textQuery, trimmedHistory, languageInstruction, sendEvent, pipeline);
+            if (results.length === 0) {
+              sendEvent("log", { message: "All primary models failed. Using fallback.", at: Date.now() });
+              response = await runFallback(mode, textQuery, trimmedHistory, languageInstruction, sendEvent, pipeline);
+              pipeline.skip("aggregate", "No aggregation due to fallback");
             } else {
-              // FINAL AGGREGATOR for SUPER CODER - Using DeepSeek V3.1 NEX
-              const aggregatorPrompt = `You are a final aggregator AI specialized in code synthesis. You have received responses from multiple AI models (including specialized coding models) for the same question. Your task is to synthesize the best solution by:
-1. Combining the most accurate code and logic from all responses
-2. Removing redundancy and contradictions
-3. Presenting production-ready, well-structured code in professional Markdown format
-4. If models disagree, choose the most logical and well-reasoned solution
-5. Ensure code follows best practices and is complete
-6. Use bold headers (##), structured bullet points, and clear code blocks
-7. End with a "Key Takeaways" section summarizing the most important points
-8. DO NOT include phrases like "This synthesis integrates..." or similar filler. Get straight to the value.
-
-User Question: ${query}
-
-Model Responses:
-${validResults.map((r, i) => `\n[Model ${i + 1}: ${r.model}]\n${r.content}`).join("\n\n---\n")}
-
-Provide the final aggregated solution in ${userLanguage === "ar" ? "Arabic" : "English"} using professional Markdown formatting:`;
-
-              sendEvent("agent_start", { agent: "final_aggregator", agentName: "Final Aggregator", model: "nex-agi/deepseek-v3.1-nex-n1:free", at: Date.now() });
-
-              const aggregatorResponse = await openrouter.chat.completions.create({
-                model: "nex-agi/deepseek-v3.1-nex-n1:free",
-                messages: [
-                  { role: "system", content: `You are an expert code aggregator that synthesizes multiple AI responses into the best possible production-ready solution. ${languageInstruction}` },
-                  { role: "user", content: aggregatorPrompt },
-                ],
-                stream: true,
-                max_tokens: 6000,
-                temperature: 0.5,
-              });
-
-              sendEvent("agent_finish", { agent: "final_aggregator", agentName: "Final Aggregator", model: "nex-agi/deepseek-v3.1-nex-n1:free", status: "completed", at: Date.now() });
-              response = aggregatorResponse;
-              modelName = "nex-agi/deepseek-v3.1-nex-n1:free";
-              displayName = "Final Aggregator";
+              try {
+                response = await runAggregator(
+                  mode,
+                  textQuery,
+                  results.map((r) => ({ agentLabel: r.agentLabel, content: r.content })),
+                  languageInstruction,
+                  sendEvent,
+                  pipeline,
+                  deepResearchPlus,
+                  webMax
+                );
+              } catch {
+                sendEvent("log", { message: "Aggregator failed. Using fallback.", at: Date.now() });
+                response = await runFallback(mode, textQuery, trimmedHistory, languageInstruction, sendEvent, pipeline);
+              }
             }
           }
 
-          // Steps 4-5 are handled in mode-specific logic above
-
-          let fullContent = "";
-          let fullReasoning = "";
-          let chunkCount = 0;
-
-          for await (const chunk of response) {
-            const delta = chunk.choices[0]?.delta;
-
-            if (!delta) continue;
-
-            chunkCount++;
-
-            // Progressive step completion during streaming (steps 6-9 for aggregator output)
-            if (chunkCount === 5) {
-              sendEvent("step_finish", { step: 6, status: "completed", at: Date.now() });
-            } else if (chunkCount === 15) {
-              sendEvent("step_finish", { step: 7, status: "completed", at: Date.now() });
-            } else if (chunkCount === 30) {
-              sendEvent("step_finish", { step: 8, status: "completed", at: Date.now() });
-            } else if (chunkCount === 50) {
-              sendEvent("step_finish", { step: 9, status: "completed", at: Date.now() });
-            }
-
-            // DeepSeek extends OpenAI's delta with reasoning_content
-            const extendedDelta = delta as typeof delta & { reasoning_content?: string };
-            if (extendedDelta.reasoning_content) {
-              fullReasoning += extendedDelta.reasoning_content;
-              sendEvent("thinking", {
-                chunk: extendedDelta.reasoning_content,
-                at: Date.now(),
-              });
-            }
-
-            if (extendedDelta.content) {
-              fullContent += extendedDelta.content;
-              sendEvent("chunk", {
-                content: extendedDelta.content,
-                at: Date.now(),
-              });
-            }
-
-            if (chunk.choices[0]?.finish_reason) {
-              sendEvent("finish", {
-                reason: chunk.choices[0].finish_reason,
-                at: Date.now(),
-              });
-            }
+          if (!response) {
+            const finalError = "No response stream produced after pipeline execution.";
+            pipeline.finish("finalize", "failed", finalError);
+            sendEvent("error", { message: finalError, at: Date.now() });
+            sendEvent("run_finish", { status: "error", message: finalError, pipeline: pipeline.snapshot(), at: Date.now() });
+            controller.close();
+            return;
           }
 
-          // Complete final step (Final Aggregation Complete)
-          sendEvent("step_finish", { step: 10, status: "completed", at: Date.now() });
-          sendEvent("log", { message: "Final aggregated answer ready", at: Date.now() });
+          const streamOptions =
+            mode === "FLASH"
+              ? { firstTokenTimeoutMs: FLASH_FIRST_TOKEN_TIMEOUT_MS, maxStreamMs: FLASH_MAX_STREAM_MS, markStageId: "primary" }
+              : { firstTokenTimeoutMs: 4000 };
+          const streamed = await streamCompletion(response, sendEvent, pipeline, streamOptions);
+          pipeline.start("finalize", "Finalizing answer");
+          const core = finalizeAnswerWithCoreSynthesis(streamed.content);
+          pipeline.finish("finalize", "success", "Answer finalized");
 
           sendEvent("done", {
-            answer: fullContent,
-            reasoning: fullReasoning || undefined,
-            model: displayName,
-            mode: mode,
+            answer: core.answer,
+            reasoning: streamed.reasoning || undefined,
+            modelName: sanitizeModelNameForUI(modelName, mode),
+            finalAnswerSummary: core.summary,
+            pipeline: pipeline.snapshot(),
             at: Date.now(),
           });
-
+          sendEvent("run_finish", { status: "ok", pipeline: pipeline.snapshot(), at: Date.now() });
           controller.close();
-        } catch (error: unknown) {
-          console.error(`[NEXUS ERROR]`, error);
+        } catch (error) {
           const errorMessage = redactSecrets(error instanceof Error ? error.message : "Unknown error");
-          sendEvent("step_finish", { step: 1, status: "error", message: errorMessage, at: Date.now() });
-          sendEvent("error", {
-            message: errorMessage,
-            at: Date.now(),
-          });
+          pipeline.finish("finalize", isTimeoutError(error) ? "timeout" : "failed", errorMessage);
+          sendEvent("error", { message: errorMessage, pipeline: pipeline.snapshot(), at: Date.now() });
+          sendEvent("run_finish", { status: "error", message: errorMessage, pipeline: pipeline.snapshot(), at: Date.now() });
           controller.close();
         }
       },
@@ -893,10 +920,9 @@ Provide the final aggregated solution in ${userLanguage === "ar" ? "Arabic" : "E
       },
     });
   } catch (error: unknown) {
-    console.error(`[NEXUS PARSE ERROR]`, error);
-    return new Response(
-      JSON.stringify({ error: redactSecrets(error instanceof Error ? error.message : "Internal server error") }),
-      { status: 500, headers: { "Content-Type": "application/json" } }
-    );
+    return new Response(JSON.stringify({ error: redactSecrets(error instanceof Error ? error.message : "Internal server error") }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
   }
 }

@@ -5,7 +5,6 @@ import { getAllAgentMeta } from "@/lib/nexusMeta";
  * GET /api/nexus/meta
  * 
  * Returns agent metadata for all Nexus modes.
- * All agents now use official DeepSeek models exclusively.
  */
 export async function GET() {
   try {

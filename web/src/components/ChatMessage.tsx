@@ -1,10 +1,64 @@
 "use client";
 
-import React, { useState, useCallback } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import React, { useState, useCallback, useEffect, useRef } from "react";
 import Image from "next/image";
 import type { ChatMessage as ChatMessageType, ChatAttachment } from "@/types/chat";
 import { MarkdownView } from "@/components/NexusChat";
+
+// Typing Animation Component for Messages
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
+function TypingTextMessage({ text, speed = 3, isStreaming = false }: { text: string; speed?: number; isStreaming?: boolean }) {
+  const [displayedText, setDisplayedText] = useState("");
+  const indexRef = useRef(0);
+  const isFirstRender = useRef(true);
+
+  useEffect(() => {
+    // If streaming, show text immediately
+    if (isStreaming) {
+      setDisplayedText(text);
+      indexRef.current = text.length;
+      return;
+    }
+
+    // If text is empty, reset
+    if (text.length === 0) {
+      setDisplayedText("");
+      indexRef.current = 0;
+      return;
+    }
+
+    // On first render, start typing animation
+    if (isFirstRender.current && text.length > 0) {
+      isFirstRender.current = false;
+      indexRef.current = 0;
+      setDisplayedText("");
+    }
+
+    // If text is shorter than displayed, reset
+    if (text.length < displayedText.length) {
+      setDisplayedText(text);
+      indexRef.current = text.length;
+      isFirstRender.current = true;
+      return;
+    }
+
+    // If we're behind, catch up with typing animation
+    if (indexRef.current < text.length) {
+      const interval = setInterval(() => {
+        if (indexRef.current < text.length) {
+          indexRef.current += speed;
+          setDisplayedText(text.slice(0, indexRef.current));
+        } else {
+          clearInterval(interval);
+        }
+      }, 20); // Smooth typing
+
+      return () => clearInterval(interval);
+    }
+  }, [text, speed, isStreaming, displayedText.length]);
+
+  return <>{displayedText}</>;
+}
 
 interface ChatMessageProps {
   message: ChatMessageType;
@@ -52,13 +106,12 @@ export function ChatMessage({
 
   const isEdited = !!message.meta?.editedAt;
   const hasAttachments = message.meta?.attachments && message.meta.attachments.length > 0;
+  const modelName = message.meta?.modelName;
+  const realResponseTimeMs = message.meta?.realResponseTimeMs;
+  const finalAnswerSummary = message.meta?.finalAnswerSummary;
 
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.2 }}
+    <div
       className={`flex gap-3 ${isUser ? "flex-row-reverse" : "flex-row"} mb-4 group`}
       onMouseEnter={() => setShowActions(true)}
       onMouseLeave={() => setShowActions(false)}
@@ -143,51 +196,75 @@ export function ChatMessage({
 
           {/* Actions (Edit/Delete/Reply) - User messages only */}
           {isUser && !isEditing && showActions && (
-            <AnimatePresence>
-              <motion.div
-                initial={{ opacity: 0, scale: 0.9 }}
-                animate={{ opacity: 1, scale: 1 }}
-                exit={{ opacity: 0, scale: 0.9 }}
-                className="absolute -top-8 right-0 flex gap-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg px-1 py-1"
-              >
-                {onReply && (
-                  <button
-                    onClick={() => onReply(message.id)}
-                    className="p-1.5 hover:bg-white/10 rounded transition-colors"
-                    title="Reply"
-                  >
-                    <svg className="w-3.5 h-3.5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
-                    </svg>
-                  </button>
-                )}
-                {onEdit && (
-                  <button
-                    onClick={() => {
-                      setIsEditing(true);
-                      setEditContent(message.content);
-                    }}
-                    className="p-1.5 hover:bg-white/10 rounded transition-colors"
-                    title="Edit"
-                  >
-                    <svg className="w-3.5 h-3.5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
-                    </svg>
-                  </button>
-                )}
-                {onDelete && (
-                  <button
-                    onClick={handleDelete}
-                    className="p-1.5 hover:bg-red-500/20 rounded transition-colors"
-                    title="Delete"
-                  >
-                    <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                    </svg>
-                  </button>
-                )}
-              </motion.div>
-            </AnimatePresence>
+            <div className="absolute -top-8 right-0 flex gap-1 bg-black/80 backdrop-blur-xl border border-white/10 rounded-lg px-1 py-1">
+              {onReply && (
+                <button
+                  onClick={() => onReply(message.id)}
+                  className="p-1.5 hover:bg-white/10 rounded transition-colors"
+                  title="Reply"
+                >
+                  <svg className="w-3.5 h-3.5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 10h10a8 8 0 018 8v2M3 10l6 6m-6-6l6-6" />
+                  </svg>
+                </button>
+              )}
+              {onEdit && (
+                <button
+                  onClick={() => {
+                    setIsEditing(true);
+                    setEditContent(message.content);
+                  }}
+                  className="p-1.5 hover:bg-white/10 rounded transition-colors"
+                  title="Edit"
+                >
+                  <svg className="w-3.5 h-3.5 text-white/60" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                  </svg>
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={handleDelete}
+                  className="p-1.5 hover:bg-red-500/20 rounded transition-colors"
+                  title="Delete"
+                >
+                  <svg className="w-3.5 h-3.5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                  </svg>
+                </button>
+              )}
+            </div>
+          )}
+          {!isUser && (modelName || typeof realResponseTimeMs === "number" || finalAnswerSummary) && (
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              {modelName && (
+                <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] font-semibold text-white/60">
+                  {modelName}
+                </span>
+              )}
+              {typeof realResponseTimeMs === "number" && (
+                <span className={`px-2 py-0.5 rounded-md border text-[9px] font-mono ${
+                  // FLASH mode detection: if modelName is FLASH or NEXUS_FLASH_PRO
+                  (modelName === "FLASH" || modelName === "NEXUS_FLASH_PRO")
+                    ? realResponseTimeMs > 1200
+                      ? "bg-red-500/10 border-red-400/30 text-red-400"
+                      : realResponseTimeMs > 800
+                        ? "bg-amber-500/10 border-amber-400/30 text-amber-400"
+                        : "bg-emerald-500/10 border-emerald-400/30 text-emerald-400"
+                    : "bg-white/5 border-white/10 text-white/50"
+                }`}>
+                  {(modelName === "FLASH" || modelName === "NEXUS_FLASH_PRO") 
+                    ? `FLASH responded in ${Math.max(0, Math.round(realResponseTimeMs))}ms${realResponseTimeMs > 1200 ? " (SLOW)" : ""}`
+                    : `${Math.max(0, Math.round(realResponseTimeMs))}ms`
+                  }
+                </span>
+              )}
+              {finalAnswerSummary && (
+                <span className="px-2 py-0.5 rounded-md bg-white/5 border border-white/10 text-[9px] text-white/45 truncate max-w-[320px]">
+                  {finalAnswerSummary}
+                </span>
+              )}
+            </div>
           )}
         </div>
 
@@ -204,7 +281,7 @@ export function ChatMessage({
           )}
         </div>
       </div>
-    </motion.div>
+    </div>
   );
 }
 

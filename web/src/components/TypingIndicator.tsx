@@ -29,7 +29,7 @@ export function TypingIndicator({ label = "AI is thinking", className = "" }: Ty
           />
         ))}
       </div>
-      <span className="text-xs text-cyan-300/70 font-medium">{label}...</span>
+      <span className="text-xs text-cyan-300/70 font-medium">{label}</span>
     </div>
   );
 }

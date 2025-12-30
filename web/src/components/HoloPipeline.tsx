@@ -1,60 +1,269 @@
 "use client";
 
-import React, { useEffect, useMemo, useState } from "react";
-import type { NexusAgent, NexusStep } from "@/state/nexusStore";
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { AnimatePresence, motion } from "framer-motion";
+import { useShallow } from "zustand/react/shallow";
+import { useLanguage } from "@/hooks/useHasMounted";
+import {
+  useNexusStore,
+  type AgentModelScore,
+  type AgentReasoningPath,
+  type NexusAgent,
+  type PipelineStage,
+  type ReasoningNode,
+} from "@/state/nexusStore";
 
-function rowClasses(status: NexusStep["status"]) {
-  if (status === "running") return "border-cyan-400/60 bg-cyan-500/5 shadow-[0_0_30px_rgba(34,211,238,0.35)]";
-  if (status === "completed") return "border-emerald-400/60 bg-emerald-500/5 shadow-[0_0_28px_rgba(52,211,153,0.25)]";
-  if (status === "error") return "border-red-500/60 bg-red-500/5 shadow-[0_0_28px_rgba(239,68,68,0.25)]";
-  return "border-white/10 bg-white/[0.02]";
+function formatLatency(ms: number | null | undefined): string {
+  if (typeof ms !== "number" || !Number.isFinite(ms)) return "";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  if (ms < 10000) return `${(ms / 1000).toFixed(2)}s`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
-function ringClasses(status: NexusStep["status"]) {
-  if (status === "running") return "stroke-cyan-300";
-  if (status === "completed") return "stroke-emerald-300";
-  if (status === "error") return "stroke-red-400";
-  return "stroke-white/20";
+function stageStatusLabel(status: PipelineStage["status"]): string {
+  if (status === "success") return "SUCCESS";
+  if (status === "failed") return "FAILED";
+  if (status === "timeout") return "TIMEOUT";
+  if (status === "skipped") return "SKIPPED";
+  if (status === "running") return "RUNNING";
+  return "IDLE";
 }
 
-function glowClasses(status: NexusStep["status"]) {
-  if (status === "running") return "ring-cyan-400/35 shadow-[0_0_40px_rgba(34,211,238,0.22)]";
-  if (status === "completed") return "ring-emerald-400/35 shadow-[0_0_36px_rgba(52,211,153,0.18)]";
-  if (status === "error") return "ring-red-500/35 shadow-[0_0_36px_rgba(239,68,68,0.18)]";
-  return "ring-white/10";
+function stageStatusClasses(status: PipelineStage["status"]): string {
+  if (status === "running") return "border-cyan-400/40 bg-cyan-500/10 text-cyan-200";
+  if (status === "success") return "border-emerald-400/40 bg-emerald-500/10 text-emerald-200";
+  if (status === "failed") return "border-red-400/40 bg-red-500/10 text-red-200";
+  if (status === "timeout") return "border-amber-400/40 bg-amber-500/10 text-amber-200";
+  if (status === "skipped") return "border-white/15 bg-white/5 text-white/60";
+  return "border-white/10 bg-white/5 text-white/50";
 }
 
-function dotColor(status: NexusStep["status"]) {
-  if (status === "running") return "bg-cyan-400 shadow-[0_0_10px_rgba(34,211,238,0.6)]";
-  if (status === "completed") return "bg-emerald-400 shadow-[0_0_10px_rgba(52,211,153,0.6)]";
-  if (status === "error") return "bg-red-400 shadow-[0_0_10px_rgba(239,68,68,0.6)]";
-  return "bg-white/20";
+function statusDotClasses(status: PipelineStage["status"]): string {
+  if (status === "running") return "bg-cyan-300 animate-pulse";
+  if (status === "success") return "bg-emerald-300";
+  if (status === "failed") return "bg-red-300";
+  if (status === "timeout") return "bg-amber-300";
+  if (status === "skipped") return "bg-white/30";
+  return "bg-white/15";
 }
 
-function ProgressRing({ status, percent, size = 30 }: { status: NexusStep["status"]; percent: number; size?: number }) {
-  const stroke = 3;
-  const r = (size - stroke) / 2;
-  const c = 2 * Math.PI * r;
-  const p = Math.max(0, Math.min(100, percent));
-  const dash = (p / 100) * c;
+function clamp01(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.max(0, Math.min(1, n));
+}
+
+function kindPillClasses(kind: ReasoningNode["kind"]) {
+  if (kind === "hypothesis") return "border-cyan-400/25 bg-cyan-500/10 text-cyan-100";
+  if (kind === "validation") return "border-emerald-400/25 bg-emerald-500/10 text-emerald-100";
+  if (kind === "synthesis") return "border-fuchsia-400/25 bg-fuchsia-500/10 text-fuchsia-100";
+  if (kind === "conclusion") return "border-amber-400/25 bg-amber-500/10 text-amber-100";
+  return "border-white/10 bg-white/5 text-white/80";
+}
+
+function orderAgentsForLanes(agents: NexusAgent[]) {
+  const agg = agents.filter((a) => a.agent === "final_aggregator" || a.agent === "apex_aggregator");
+  const rest = agents.filter((a) => !(a.agent === "final_aggregator" || a.agent === "apex_aggregator"));
+  rest.sort((a, b) => (a.startedAt ?? Number.MAX_SAFE_INTEGER) - (b.startedAt ?? Number.MAX_SAFE_INTEGER));
+  return [...rest, ...agg];
+}
+
+const DeepThinkingLanes = React.memo(function DeepThinkingLanes({
+  agents,
+  reasoningByAgent,
+}: {
+  agents: NexusAgent[];
+  reasoningByAgent: Record<string, AgentReasoningPath>;
+}) {
+  const [isLanesCollapsed, setIsLanesCollapsed] = useState(false);
+  const laneAgents = useMemo(() => orderAgentsForLanes(agents), [agents]);
+  const hasAnyNodes = useMemo(
+    () => laneAgents.some((a) => (reasoningByAgent[a.agent]?.nodes?.length ?? 0) > 0),
+    [laneAgents, reasoningByAgent]
+  );
+
+  if (!hasAnyNodes) return null;
 
   return (
-    <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="absolute inset-0">
-      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="rgba(255,255,255,0.10)" strokeWidth={stroke} />
-      <circle
-        cx={size / 2}
-        cy={size / 2}
-        r={r}
-        fill="none"
-        strokeWidth={stroke}
-        strokeLinecap="round"
-        strokeDasharray={`${dash} ${c}`}
-        className={"transition-all duration-300 " + ringClasses(status)}
-        transform={`rotate(-90 ${size / 2} ${size / 2})`}
-      />
-    </svg>
+    <details
+      className="rounded-2xl border border-white/10 bg-black/45 backdrop-blur-xl overflow-hidden"
+      open={!isLanesCollapsed}
+      onToggle={(e) => setIsLanesCollapsed(!(e.target as HTMLDetailsElement).open)}
+    >
+      <summary className="cursor-pointer list-none px-3 py-2 text-xs text-white/75 hover:bg-white/5 transition-colors">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-white/90">Thinking Lanes</span>
+            <span className="text-white/40">{laneAgents.length}</span>
+          </div>
+          <span className="text-[10px] text-white/40">{isLanesCollapsed ? "SHOW" : "HIDE"}</span>
+        </div>
+      </summary>
+
+      <div className="border-t border-white/5 px-3 py-2">
+        <div className="space-y-2">
+          {laneAgents.map((a) => (
+            <LaneRow key={a.agent} agent={a} reasoningByAgent={reasoningByAgent} />
+          ))}
+        </div>
+      </div>
+    </details>
   );
+});
+
+const LaneRow = React.memo(function LaneRow({
+  agent: a,
+  reasoningByAgent,
+}: {
+  agent: NexusAgent;
+  reasoningByAgent: Record<string, AgentReasoningPath>;
+}) {
+  const [isRowCollapsed, setIsRowCollapsed] = useState(false);
+  const path = reasoningByAgent[a.agent];
+  const nodes = Array.isArray(path?.nodes) ? path.nodes : [];
+
+  return (
+    <div className="rounded-xl border border-white/10 bg-white/[0.04] px-2.5 py-2">
+      <div
+        className="flex items-start justify-between gap-3 cursor-pointer select-none"
+        onClick={() => setIsRowCollapsed(!isRowCollapsed)}
+      >
+        <div className="min-w-0">
+          <div className="flex items-center gap-2">
+            <div className={"h-2 w-2 rounded-full " + (a.status === "running" ? "bg-cyan-400 animate-pulse" : a.status === "completed" ? "bg-emerald-400" : a.status === "failed" ? "bg-red-400" : "bg-white/25")} />
+            <div className="truncate text-xs font-medium text-white/90">{a.agentName}</div>
+          </div>
+        </div>
+        <div className="shrink-0 text-right">
+          <div className="text-[11px] text-white/40">{a.duration || ""}</div>
+          <div className="text-[10px] text-white/30">{nodes.length ? `${nodes.length} nodes` : "..."}</div>
+        </div>
+      </div>
+
+      {!isRowCollapsed && (
+        <motion.div
+          initial={{ height: 0, opacity: 0 }}
+          animate={{ height: "auto", opacity: 1 }}
+          className="mt-2 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden"
+        >
+          <div className="flex min-w-max items-center gap-2 pb-1">
+            {nodes.length > 0 ? (
+              nodes.map((n, idx) => (
+                <React.Fragment key={n.id}>
+                  <span
+                    className={
+                      "inline-flex items-center gap-1 rounded-full border px-2 py-1 text-[10px] " +
+                      kindPillClasses(n.kind)
+                    }
+                    title={n.kind}
+                  >
+                    <span className="text-white/70">{n.kind}</span>
+                    <span className="text-white/95">{n.label}</span>
+                  </span>
+                  {idx < nodes.length - 1 && <span className="h-px w-6 bg-gradient-to-r from-white/10 via-white/25 to-white/10" />}
+                </React.Fragment>
+              ))
+            ) : (
+              <div className="text-[11px] text-white/35">Waiting for reasoning path...</div>
+            )}
+          </div>
+        </motion.div>
+      )}
+    </div>
+  );
+});
+
+function scoreMean01(s: AgentModelScore | undefined): number {
+  if (!s) return 0;
+  const vals = Object.values(s.signals || {}).filter((v) => typeof v === "number" && Number.isFinite(v));
+  if (vals.length === 0) return 0;
+  const mean = vals.reduce((a, b) => a + b, 0) / vals.length;
+  return clamp01(mean / 100);
 }
+
+const ApexContributionBars = React.memo(function ApexContributionBars({
+  agents,
+  scoresByAgent,
+}: {
+  agents: NexusAgent[];
+  scoresByAgent: Record<string, AgentModelScore>;
+}) {
+  const apexAgents = useMemo(() => {
+    const baseline = agents.find((a) => a.agent === "mimo_v2");
+    const specialists = agents.filter((a) => a.agent.startsWith("apex_") && a.agent !== "apex_aggregator");
+    const aggregator = agents.find((a) => a.agent === "apex_aggregator");
+    const list: NexusAgent[] = [];
+    if (baseline) list.push(baseline);
+    list.push(...specialists);
+    if (aggregator) list.push(aggregator);
+    return list;
+  }, [agents]);
+
+  const contributions = useMemo(() => {
+    const base: Array<{ agent: NexusAgent; weight: number }> = apexAgents.map((a) => ({
+      agent: a,
+      weight: scoreMean01(scoresByAgent[a.agent]),
+    }));
+
+    let total = base.reduce((acc, x) => acc + x.weight, 0);
+    if (total <= 0) {
+      const durations = apexAgents
+        .map((a) => (typeof a.durationMs === "number" && Number.isFinite(a.durationMs) ? a.durationMs : 0))
+        .filter((n) => n > 0);
+      const max = durations.length ? Math.max(...durations) : 0;
+      const withDuration = base.map((x) => ({
+        ...x,
+        weight: max > 0 ? clamp01((x.agent.durationMs || 0) / max) : 0,
+      }));
+      total = withDuration.reduce((acc, x) => acc + x.weight, 0);
+      if (total > 0) return withDuration.map((x) => ({ ...x, share: x.weight / total }));
+      const equal = apexAgents.length ? 1 / apexAgents.length : 0;
+      return base.map((x) => ({ ...x, share: equal }));
+    }
+
+    return base.map((x) => ({ ...x, share: x.weight / total }));
+  }, [apexAgents, scoresByAgent]);
+
+  if (apexAgents.length === 0) return null;
+
+  return (
+    <details className="rounded-2xl border border-white/10 bg-black/45 backdrop-blur-xl">
+      <summary className="cursor-pointer list-none px-3 py-2 text-xs text-white/80">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-white/90">Apex Contributions</span>
+            <span className="text-white/45">{apexAgents.length}</span>
+          </div>
+          <span className="text-white/40">Share</span>
+        </div>
+      </summary>
+
+      <div className="max-h-64 overflow-auto border-t border-white/5">
+        {contributions.map((c) => {
+          const a = c.agent;
+          const pct = Math.round(clamp01(c.share) * 100);
+          const barClass = "from-cyan-400 via-fuchsia-300 to-cyan-200";
+
+          return (
+            <div key={a.agent} className="border-t border-white/5 px-3 py-2">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="flex items-center gap-2">
+                    <div className="truncate text-xs font-medium text-white/90">{a.agentName}</div>
+                  </div>
+                </div>
+                <div className="shrink-0 text-right text-[11px] font-mono text-white/50">{pct}%</div>
+              </div>
+
+              <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-white/10">
+                <div className={"h-full rounded-full bg-gradient-to-r transition-all duration-500 " + barClass} style={{ width: `${pct}%` }} />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </details>
+  );
+});
 
 const SwarmDetails = React.memo(function SwarmDetails({ agents }: { agents: NexusAgent[] }) {
   const counts = useMemo(() => {
@@ -74,11 +283,11 @@ const SwarmDetails = React.memo(function SwarmDetails({ agents }: { agents: Nexu
 
   return (
     <div className="mt-3">
-      <details className="rounded-xl border border-cyan-400/20 bg-black/55 backdrop-blur-xl">
+      <details className="rounded-2xl border border-white/10 bg-black/45 backdrop-blur-xl">
         <summary className="cursor-pointer list-none px-3 py-2 text-xs text-white/80">
           <div className="flex items-center justify-between gap-3">
             <div className="flex items-center gap-2">
-              <span className="text-white/90">Swarm Details</span>
+              <span className="text-white/90">Lane Status</span>
               <span className="text-white/45">
                 {counts.completed}/{counts.total} OK{counts.failed ? ` • ${counts.failed} ERR` : ""}
               </span>
@@ -111,22 +320,16 @@ const SwarmDetails = React.memo(function SwarmDetails({ agents }: { agents: Nexu
             >
               <div className="min-w-0">
                 <div className="truncate text-xs font-medium text-white/90">{a.agentName}</div>
-                <div className="mt-0.5 truncate text-[11px] text-white/45">
-                  {a.model.split('/').pop()?.split(':')[0] || a.model}
-                </div>
               </div>
               <div className="flex shrink-0 items-center gap-2">
                 {a.status === "running" ? (
-                  <div
-                    className="h-4 w-4 rounded-full border border-white/15 border-t-cyan-300"
-                    style={{ animation: "spin 1s linear infinite" }}
-                  />
+                  <div className="h-4 w-4 rounded-full border border-white/15 border-t-cyan-300" style={{ animation: "spin 1s linear infinite" }} />
                 ) : a.status === "completed" ? (
-                  <span className="text-emerald-300">✓</span>
+                  <span className="text-emerald-300">OK</span>
                 ) : a.status === "failed" ? (
-                  <span className="text-red-300">✕</span>
+                  <span className="text-red-300">ERR</span>
                 ) : (
-                  <span className="text-white/25">•</span>
+                  <span className="text-white/25">...</span>
                 )}
                 <div className="w-12 text-right text-[11px] text-white/40">{a.duration || ""}</div>
               </div>
@@ -138,453 +341,193 @@ const SwarmDetails = React.memo(function SwarmDetails({ agents }: { agents: Nexu
   );
 });
 
-// Mobile Active Step Card - Shows only the currently active step
-const MobileActiveStepCard = React.memo(function MobileActiveStepCard({
-  step,
-  now,
-  agents,
-}: {
-  step: NexusStep | null;
-  now: number;
-  agents: NexusAgent[];
-}) {
-  if (!step) {
-    return (
-      <div className="rounded-2xl border border-white/10 bg-black/40 p-6 text-center backdrop-blur-xl">
-        <div className="flex justify-center mb-3">
-          <div className="relative h-3 w-3">
-            <div className="absolute inset-0 rounded-full bg-cyan-400 animate-ping opacity-75" />
-            <div className="relative h-3 w-3 rounded-full bg-cyan-400 shadow-[0_0_12px_rgba(34,211,238,0.8)]" />
-          </div>
-        </div>
-        <div className="text-sm font-medium text-cyan-200">SYSTEM READY</div>
-        <div className="mt-1 text-xs text-white/40">Awaiting input...</div>
-      </div>
-    );
-  }
-
-  const percent =
-    step.status === "completed"
-      ? 100
-      : step.status !== "running"
-        ? 0
-        : typeof step.percent === "number" && step.percent > 0
-          ? step.percent
-          : typeof step.startedAt === "number"
-            ? Math.min(92, Math.max(0, ((now - step.startedAt) / 1500) * 92))
-            : 0;
-
-  // Status badge text and color
-  const statusBadge = step.status === "running" 
-    ? { text: "ACTIVE", color: "bg-cyan-500/20 text-cyan-300 border-cyan-400/30" }
-    : step.status === "completed"
-      ? { text: "DONE", color: "bg-emerald-500/20 text-emerald-300 border-emerald-400/30" }
-      : step.status === "error"
-        ? { text: "ERROR", color: "bg-red-500/20 text-red-300 border-red-400/30" }
-        : { text: "QUEUED", color: "bg-white/5 text-white/50 border-white/10" };
-
-  return (
-    <div
-            className={
-              "relative overflow-hidden rounded-2xl border p-4 transition-all duration-200 transform-gpu will-change-transform " + rowClasses(step.status)
-            }
-    >
-      <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(step.status)} />
-
-      <div className="flex items-center gap-3">
-        {/* Large Progress Ring */}
-        <div className="relative h-14 w-14 flex-shrink-0">
-          <ProgressRing status={step.status} percent={percent} size={56} />
-          <div className="absolute inset-0 flex items-center justify-center text-base font-bold text-white/90">
-            {step.status === "completed" ? (
-              <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-              </svg>
-            ) : step.status === "error" ? (
-              <svg className="h-5 w-5 text-red-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            ) : (
-              step.id
-            )}
-          </div>
-        </div>
-
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[11px] text-white/50">Step {step.id}/10</div>
-            <span className={`px-2 py-0.5 rounded-full text-[10px] font-semibold border ${statusBadge.color}`}>
-              {statusBadge.text}
-            </span>
-          </div>
-          <div className="mt-0.5 truncate text-sm font-semibold text-white/95">{step.label}</div>
-
-          {step.status === "running" && (
-            <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200 transition-all duration-300"
-                style={{ width: `${Math.max(0, Math.min(100, percent))}%` }}
-              />
-            </div>
-          )}
-        </div>
-      </div>
-
-      {step.id === 1 && agents.length > 0 && <SwarmDetails agents={agents} />}
-    </div>
+export function HoloPipeline({ stages, agents }: { stages: PipelineStage[]; agents: NexusAgent[] }) {
+  const { t } = useLanguage();
+  const {
+    primaryPipelineCollapsed,
+    primaryPipelineInitialized,
+    initPrimaryPipelineCollapsed,
+    setPrimaryPipelineCollapsed,
+    reasoningPaths,
+    modelScores,
+    runMode,
+    runStartedAt,
+    runFinishedAt,
+  } = useNexusStore(
+    useShallow((s) => ({
+      primaryPipelineCollapsed: s.primaryPipelineCollapsed,
+      primaryPipelineInitialized: s.primaryPipelineInitialized,
+      initPrimaryPipelineCollapsed: s.initPrimaryPipelineCollapsed,
+      setPrimaryPipelineCollapsed: s.setPrimaryPipelineCollapsed,
+      reasoningPaths: s.reasoningPaths,
+      modelScores: s.modelScores,
+      runMode: s.runMode,
+      runStartedAt: s.runStartedAt,
+      runFinishedAt: s.runFinishedAt,
+    }))
   );
-});
 
-// Mobile Dot Rail - Horizontal progress indicator with enhanced contrast
-const MobileDotRail = React.memo(function MobileDotRail({
-  steps,
-  activeIndex,
-}: {
-  steps: NexusStep[];
-  activeIndex: number;
-}) {
-  return (
-    <div className="flex items-center justify-center gap-1.5 py-3 px-2">
-      {steps.map((s, i) => (
-        <div
-          key={s.id}
-          className={`flex items-center justify-center rounded-full transition-all duration-300 transform-gpu ${
-            i === activeIndex 
-              ? "h-7 w-7 ring-2 ring-offset-1 ring-offset-black " + 
-                (s.status === "running" ? "ring-cyan-400/70" : 
-                 s.status === "completed" ? "ring-emerald-400/70" : 
-                 s.status === "error" ? "ring-red-400/70" : "ring-white/30")
-              : "h-3 w-3"
-          } ${dotColor(s.status)}`}
-        >
-          {/* Show icon for active dot */}
-          {i === activeIndex && (
-            <span className="text-[10px] font-bold text-black">
-              {s.status === "completed" ? "✓" : 
-               s.status === "error" ? "!" : 
-               s.status === "running" ? "" : s.id}
-            </span>
-          )}
-        </div>
-      ))}
-    </div>
-  );
-});
-
-// Desktop Full Pipeline View
-const DesktopPipelineView = React.memo(function DesktopPipelineView({
-  steps,
-  agents,
-  now,
-}: {
-  steps: NexusStep[];
-  agents: NexusAgent[];
-  now: number;
-}) {
-  return (
-    <div
-      className="relative overflow-hidden rounded-3xl border border-white/10 bg-black/40 p-5 backdrop-blur-xl transform-gpu will-change-transform"
-      style={{ transform: "perspective(1000px) rotateX(2deg)" }}
-    >
-      <div
-        className="pointer-events-none absolute inset-0 opacity-80"
-        style={{
-          background:
-            "radial-gradient(circle at 10% 20%,rgba(34,211,238,0.12),transparent 45%),radial-gradient(circle at 80% 30%,rgba(232,121,249,0.10),transparent 50%)",
-        }}
-      />
-      <div className="flex items-center justify-between gap-4">
-        <div className="text-xs tracking-[0.28em] text-white/60">PIPELINE</div>
-        <div className="text-xs text-white/40">Steps 1–10</div>
-      </div>
-
-      <div className="mt-5 space-y-3">
-        {/* Group: Initial Steps (1-4) */}
-        {steps.filter(s => s.id <= 4).map((s) => (
-          <div
-            key={s.id}
-            className={
-              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 transform-gpu will-change-transform " +
-              rowClasses(s.status)
-            }
-            style={{ transform: "perspective(1000px) rotateX(3deg)" }}
-          >
-            <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(s.status)} />
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-[30px] w-[30px] items-center justify-center">
-                <div className="relative h-[30px] w-[30px]">
-                  <ProgressRing
-                    status={s.status}
-                    percent={
-                      s.status === "completed"
-                        ? 100
-                        : s.status !== "running"
-                          ? 0
-                          : typeof s.percent === "number" && s.percent > 0
-                            ? s.percent
-                            : typeof s.startedAt === "number"
-                              ? Math.min(92, Math.max(0, ((now - s.startedAt) / 1500) * 92))
-                              : 0
-                    }
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-white/85">
-                    {s.status === "completed" ? "✓" : s.id}
-                  </div>
-                </div>
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="text-[11px] text-white/45">Step {s.id}</div>
-                      <div className="truncate text-sm font-medium text-white/90">{s.label}</div>
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-white/40">{s.name}</div>
-                  </div>
-                  <div className="text-[11px] text-white/35">
-                    {s.status === "running"
-                      ? `${Math.round(s.percent || 0)}%`
-                      : s.status === "idle"
-                        ? "queued"
-                        : s.status}
-                  </div>
-                </div>
-
-                {s.status === "running" ? (
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200"
-                      style={{ width: `${Math.max(0, Math.min(100, s.percent || 0))}%` }}
-                    />
-                  </div>
-                ) : null}
-
-                {s.id === 1 && agents.length ? <SwarmDetails agents={agents} /> : null}
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {/* Group Separator: Multi-Model Execution */}
-        {steps.find(s => s.id === 5) && (
-          <div className="relative py-2">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10"></div>
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-black/40 px-3 text-[10px] font-semibold uppercase tracking-wider text-white/50">
-                Multi-Model Parallel Execution
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Group: Multi-Model Step (5) */}
-        {steps.filter(s => s.id === 5).map((s) => (
-          <div
-            key={s.id}
-            className={
-              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 transform-gpu will-change-transform " +
-              rowClasses(s.status)
-            }
-            style={{ transform: "perspective(1000px) rotateX(3deg)" }}
-          >
-            <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(s.status)} />
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-[30px] w-[30px] items-center justify-center">
-                <div className="relative h-[30px] w-[30px]">
-                  <ProgressRing
-                    status={s.status}
-                    percent={
-                      s.status === "completed"
-                        ? 100
-                        : s.status !== "running"
-                          ? 0
-                          : typeof s.percent === "number" && s.percent > 0
-                            ? s.percent
-                            : typeof s.startedAt === "number"
-                              ? Math.min(92, Math.max(0, ((now - s.startedAt) / 1500) * 92))
-                              : 0
-                    }
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-white/85">
-                    {s.status === "completed" ? "✓" : s.id}
-                  </div>
-                </div>
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="text-[11px] text-white/45">Step {s.id}</div>
-                      <div className="truncate text-sm font-medium text-white/90">{s.label}</div>
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-white/40">{s.name}</div>
-                  </div>
-                  <div className="text-[11px] text-white/35">
-                    {s.status === "running"
-                      ? `${Math.round(s.percent || 0)}%`
-                      : s.status === "idle"
-                        ? "queued"
-                        : s.status}
-                  </div>
-                </div>
-
-                {s.status === "running" ? (
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200"
-                      style={{ width: `${Math.max(0, Math.min(100, s.percent || 0))}%` }}
-                    />
-                  </div>
-                ) : null}
-
-                {s.id === 1 && agents.length ? <SwarmDetails agents={agents} /> : null}
-              </div>
-            </div>
-          </div>
-        ))}
-
-        {/* Group Separator: Final Aggregation */}
-        {steps.find(s => s.id === 6) && (
-          <div className="relative py-2">
-            <div className="absolute inset-0 flex items-center">
-              <div className="w-full border-t border-white/10"></div>
-            </div>
-            <div className="relative flex justify-center">
-              <span className="bg-black/40 px-3 text-[10px] font-semibold uppercase tracking-wider text-white/50">
-                Final Aggregation
-              </span>
-            </div>
-          </div>
-        )}
-
-        {/* Group: Final Steps (6-10) */}
-        {steps.filter(s => s.id >= 6).map((s) => (
-          <div
-            key={s.id}
-            className={
-              "relative overflow-hidden rounded-2xl border px-4 py-3 transition-all duration-200 hover:-translate-y-0.5 transform-gpu will-change-transform " +
-              rowClasses(s.status)
-            }
-            style={{ transform: "perspective(1000px) rotateX(3deg)" }}
-          >
-            <div className={"pointer-events-none absolute inset-0 rounded-2xl ring-1 " + glowClasses(s.status)} />
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 flex h-[30px] w-[30px] items-center justify-center">
-                <div className="relative h-[30px] w-[30px]">
-                  <ProgressRing
-                    status={s.status}
-                    percent={
-                      s.status === "completed"
-                        ? 100
-                        : s.status !== "running"
-                          ? 0
-                          : typeof s.percent === "number" && s.percent > 0
-                            ? s.percent
-                            : typeof s.startedAt === "number"
-                              ? Math.min(92, Math.max(0, ((now - s.startedAt) / 1500) * 92))
-                              : 0
-                    }
-                  />
-                  <div className="absolute inset-0 flex items-center justify-center text-[11px] font-semibold text-white/85">
-                    {s.status === "completed" ? "✓" : s.id}
-                  </div>
-                </div>
-              </div>
-
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <div className="text-[11px] text-white/45">Step {s.id}</div>
-                      <div className="truncate text-sm font-medium text-white/90">{s.label}</div>
-                    </div>
-                    <div className="mt-0.5 truncate text-xs text-white/40">{s.name}</div>
-                  </div>
-                  <div className="text-[11px] text-white/35">
-                    {s.status === "running"
-                      ? `${Math.round(s.percent || 0)}%`
-                      : s.status === "idle"
-                        ? "queued"
-                        : s.status}
-                  </div>
-                </div>
-
-                {s.status === "running" ? (
-                  <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-white/10">
-                    <div
-                      className="h-full rounded-full bg-gradient-to-r from-cyan-400 to-cyan-200"
-                      style={{ width: `${Math.max(0, Math.min(100, s.percent || 0))}%` }}
-                    />
-                  </div>
-                ) : null}
-
-                {s.id === 1 && agents.length ? <SwarmDetails agents={agents} /> : null}
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-});
-
-export function HoloPipeline({ steps, agents }: { steps: NexusStep[]; agents: NexusAgent[] }) {
-  const anyRunning = useMemo(() => steps.some((s) => s.status === "running"), [steps]);
-  const [now, setNow] = useState(() => Date.now());
-
-  // Find active step (running, or last completed, or first idle)
-  const { activeStep, activeIndex } = useMemo(() => {
-    const runningIdx = steps.findIndex((s) => s.status === "running");
-    if (runningIdx !== -1) return { activeStep: steps[runningIdx], activeIndex: runningIdx };
-
-    // Find last completed
-    let lastCompletedIdx = -1;
-    for (let i = steps.length - 1; i >= 0; i--) {
-      if (steps[i].status === "completed") {
-        lastCompletedIdx = i;
-        break;
-      }
-    }
-    if (lastCompletedIdx !== -1) return { activeStep: steps[lastCompletedIdx], activeIndex: lastCompletedIdx };
-
-    // Find first step with error or first idle
-    const errorIdx = steps.findIndex((s) => s.status === "error");
-    if (errorIdx !== -1) return { activeStep: steps[errorIdx], activeIndex: errorIdx };
-
-    return { activeStep: steps[0] || null, activeIndex: 0 };
-  }, [steps]);
+  const panelRef = useRef<HTMLDivElement | null>(null);
+  const buttonRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
-    if (!anyRunning) return;
-    const id = window.setInterval(() => setNow(Date.now()), 80);
-    return () => window.clearInterval(id);
-  }, [anyRunning]);
+    if (typeof window === "undefined") return;
+    if (primaryPipelineInitialized) return;
+    initPrimaryPipelineCollapsed(true);
+  }, [primaryPipelineInitialized, initPrimaryPipelineCollapsed]);
+
+  useEffect(() => {
+    if (primaryPipelineCollapsed) return;
+    const onClick = (event: MouseEvent) => {
+      const target = event.target as Node;
+      if (panelRef.current?.contains(target) || buttonRef.current?.contains(target)) return;
+      setPrimaryPipelineCollapsed(true);
+    };
+    window.addEventListener("mousedown", onClick);
+    return () => window.removeEventListener("mousedown", onClick);
+  }, [primaryPipelineCollapsed, setPrimaryPipelineCollapsed]);
+
+  const runElapsedMs = useMemo(() => {
+    if (typeof runStartedAt === "number" && Number.isFinite(runStartedAt) && runStartedAt > 0) {
+      if (typeof runFinishedAt === "number" && Number.isFinite(runFinishedAt) && runFinishedAt >= runStartedAt) {
+        return runFinishedAt - runStartedAt;
+      }
+      return Date.now() - runStartedAt;
+    }
+    return null;
+  }, [runStartedAt, runFinishedAt]);
+
+  const runElapsedLabel = useMemo(() => formatLatency(runElapsedMs), [runElapsedMs]);
+
+  const activeStage = useMemo(() => stages.find((s) => s.status === "running"), [stages]);
+  const hasStages = stages.length > 0;
+  const currentStatus = useMemo(() => {
+    if (activeStage) return "running";
+    if (stages.some((s) => s.status === "failed" || s.status === "timeout")) return "failed";
+    if (stages.some((s) => s.status === "success")) return "success";
+    return "idle";
+  }, [stages, activeStage]);
+
+  const modeLabel = String(runMode || "").toUpperCase();
+  const isDeepThinking = modeLabel === "DEEP_THINKING";
+  const isApex = modeLabel === "APEX";
 
   return (
-    <div className="w-full">
-      {/* Mobile View (hidden on lg+) */}
-      <div className="block lg:hidden">
-        <div className="rounded-3xl border border-white/10 bg-black/40 p-4 backdrop-blur-xl">
-          <div className="mb-3 flex items-center justify-between">
-            <div className="text-xs tracking-[0.2em] text-white/60">PIPELINE</div>
-            <div className="text-xs text-white/40">
-              {activeIndex + 1}/10
-            </div>
-          </div>
-
-          <MobileActiveStepCard step={activeStep} now={now} agents={agents} />
-          <MobileDotRail steps={steps} activeIndex={activeIndex} />
+    <>
+      <motion.button
+        ref={buttonRef}
+        onClick={() => setPrimaryPipelineCollapsed(!primaryPipelineCollapsed)}
+        className={
+          "fixed bottom-6 right-5 z-[120] flex items-center gap-3 rounded-full lg-surface lg-depth-1 lg-shine glass-noise px-4 py-2 text-xs text-white/85 shadow-[0_15px_40px_rgba(0,0,0,0.45)] transition-colors " +
+          (primaryPipelineCollapsed ? "hover:bg-white/[0.06]" : "bg-white/[0.08]")
+        }
+        whileHover={{ scale: 1.02 }}
+        whileTap={{ scale: 0.98 }}
+        transition={{ type: "spring", stiffness: 480, damping: 32, mass: 0.6 }}
+        aria-label="Processing Details"
+        aria-expanded={!primaryPipelineCollapsed}
+        aria-controls="nexus-processing-details"
+      >
+        <span className={"h-2 w-2 rounded-full " + (currentStatus === "running" ? "bg-cyan-300 animate-pulse" : currentStatus === "failed" ? "bg-red-300" : currentStatus === "success" ? "bg-emerald-300" : "bg-white/20")} />
+        <div className="flex flex-col text-left">
+          <span className="text-[10px] uppercase tracking-[0.28em] text-white/65">{t("pipeline.title")}</span>
+          <span className="text-[11px] text-white/90">
+            {modeLabel || "RUN"}{runElapsedLabel ? ` • ${runElapsedLabel}` : ""}
+          </span>
         </div>
-      </div>
+      </motion.button>
 
-      {/* Desktop View (hidden on mobile) */}
-      <div className="hidden lg:block">
-        <DesktopPipelineView steps={steps} agents={agents} now={now} />
-      </div>
-    </div>
+      <AnimatePresence>
+        {!primaryPipelineCollapsed && (
+          <motion.div
+            ref={panelRef}
+            id="nexus-processing-details"
+            role="dialog"
+            aria-label="Processing Details"
+            initial={{ opacity: 0, y: 12, scale: 0.98 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 12, scale: 0.98 }}
+            transition={{ type: "spring", stiffness: 520, damping: 40, mass: 0.7 }}
+            className="fixed bottom-20 right-4 z-[110] w-[92vw] max-w-[460px] max-h-[70vh] rounded-3xl lg-surface lg-surface-strong lg-depth-2 glass-noise lg-shine overflow-hidden"
+          >
+            <div className="flex items-center justify-between gap-4 border-b border-white/10 px-4 py-3">
+              <div className="min-w-0">
+                <div className="text-[10px] uppercase tracking-[0.28em] text-white/60">{t("pipeline.title")}</div>
+                <div className="mt-1 text-sm font-semibold text-white/90">{modeLabel || "NEXUS RUN"}</div>
+              </div>
+              <div className="flex items-center gap-3">
+                {runElapsedLabel && (
+                  <div className="text-[11px] font-mono text-white/60">{runElapsedLabel}</div>
+                )}
+                <div className={"h-2 w-2 rounded-full " + statusDotClasses(activeStage?.status || "idle")} />
+                <button
+                  onClick={() => setPrimaryPipelineCollapsed(true)}
+                  className="rounded-lg p-2 text-white/45 hover:text-white/85 hover:bg-white/5 transition-colors"
+                  aria-label="Close processing details"
+                >
+                  <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M15 5L5 15M5 5l10 10" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-4 [scrollbar-width:thin] [scrollbar-color:rgba(148,163,184,0.35)_transparent]">
+              <div className="space-y-3">
+                {!hasStages && (
+                  <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-xs text-white/60">
+                    Pipeline idle. Run a request to see live stages.
+                  </div>
+                )}
+                {stages.map((stage) => (
+                  <div
+                    key={stage.id}
+                    className={
+                      "rounded-2xl border px-3 py-3 transition-all " +
+                      (stage.status === "running"
+                        ? "border-cyan-400/40 bg-cyan-500/10 shadow-[0_0_28px_rgba(34,211,238,0.22)]"
+                        : stage.status === "success"
+                          ? "border-emerald-400/40 bg-emerald-500/10"
+                          : stage.status === "failed"
+                            ? "border-red-400/40 bg-red-500/10"
+                            : stage.status === "timeout"
+                              ? "border-amber-400/40 bg-amber-500/10"
+                              : "border-white/10 bg-white/5")
+                    }
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={"h-2 w-2 rounded-full " + statusDotClasses(stage.status)} />
+                          <div className="text-xs font-semibold text-white/90">{stage.name}</div>
+                        </div>
+                        {stage.detail && (
+                          <div className="mt-1 text-[11px] text-white/55">{stage.detail}</div>
+                        )}
+                      </div>
+                      <div className="shrink-0 text-right">
+                        <div className={"inline-flex rounded-full border px-2 py-0.5 text-[9px] font-semibold " + stageStatusClasses(stage.status)}>
+                          {stageStatusLabel(stage.status)}
+                        </div>
+                        <div className="mt-1 text-[10px] font-mono text-white/45">{formatLatency(stage.latencyMs)}</div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {(isDeepThinking || isApex) && (
+                <div className="space-y-3">
+                  <DeepThinkingLanes agents={agents} reasoningByAgent={reasoningPaths} />
+                  {isApex && <ApexContributionBars agents={agents} scoresByAgent={modelScores} />}
+                </div>
+              )}
+
+              <SwarmDetails agents={agents} />
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </>
   );
 }

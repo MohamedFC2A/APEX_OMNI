@@ -1,0 +1,173 @@
+{
+  "app": {
+    "title": "NEXUS AI",
+    "subtitle": "APEX OMNI — The Unified Intelligence Core",
+    "description": "Real-time synthesis • Adaptive reasoning • Precision output",
+    "madeBy": "Made by Mohamed Matany"
+  },
+  "header": {
+    "apexOmni": "APEX OMNI",
+    "history": "History",
+    "newChat": "New Chat",
+    "language": "EN"
+  },
+  "modes": {
+    "FLASH": {
+      "label": "FLASH",
+      "sublabel": "Ultra-fast single-engine",
+      "description": "Ultra-fast single-engine response.\nOptimized for instant answers with zero orchestration overhead.",
+      "what": "Ultra-fast single-engine response.\nOptimized for instant answers with zero orchestration overhead.",
+      "when": "Use for quick questions and instant answers.",
+      "impact": "Minimum latency • High responsiveness • Lightweight"
+    },
+    "DEEP_THINKING": {
+      "label": "DEEP_THINKING",
+      "sublabel": "Parallel reasoning ensemble",
+      "description": "Parallel reasoning system.\nMultiple internal perspectives combined into one refined answer.",
+      "what": "Parallel reasoning system.\nMultiple internal perspectives combined into one refined answer.",
+      "when": "Use for complex problems and deep analysis.",
+      "impact": "Stronger depth • Higher accuracy • Refined final output"
+    },
+    "APEX": {
+      "label": "APEX",
+      "sublabel": "Extended specialist swarm",
+      "description": "Specialist swarm architecture.\nDedicated logic, critique, and synthesis stages with final consolidation.",
+      "what": "Specialist swarm architecture.\nDedicated logic, critique, and synthesis stages with final consolidation.",
+      "when": "Use for production code, system design, and high-stakes reasoning.",
+      "impact": "Specialist depth • Strong evaluation • Consolidated final output"
+    },
+    "standard": {
+      "label": "NEXUS_FLASH_PRO",
+      "sublabel": "Ultra-fast single-engine",
+      "description": "Ultra-fast single-engine response.\nOptimized for instant answers with zero orchestration overhead.",
+      "what": "Ultra-fast single-engine response.\nOptimized for instant answers with zero orchestration overhead.",
+      "when": "Use for quick questions and instant answers.",
+      "impact": "Minimum latency • High responsiveness • Lightweight"
+    },
+    "thinking": {
+      "label": "NEXUS_DEEP_THINKING_PRO",
+      "sublabel": "Parallel reasoning ensemble",
+      "description": "Parallel reasoning system.\nMultiple internal perspectives combined into one refined answer.",
+      "what": "Parallel reasoning system.\nMultiple internal perspectives combined into one refined answer.",
+      "when": "Use for complex problems and deep analysis.",
+      "impact": "Stronger depth • Higher accuracy • Refined final output"
+    },
+    "super_thinking": {
+      "label": "NEXUS_APEX_OMENI",
+      "sublabel": "Extended specialist swarm",
+      "description": "Specialist swarm architecture.\nDedicated logic, critique, and synthesis stages with final consolidation.",
+      "what": "Specialist swarm architecture.\nDedicated logic, critique, and synthesis stages with final consolidation.",
+      "when": "Use for production code, system design, and high-stakes reasoning.",
+      "impact": "Specialist depth • Strong evaluation • Consolidated final output"
+    },
+    "selectEngine": "Select Engine",
+    "active": "ACTIVE"
+  },
+  "pipeline": {
+    "title": "PIPELINE",
+    "steps": {
+      "step1": "Swarm Intelligence Aggregated",
+      "step2": "Omni Deconstruct Engaged",
+      "step3": "Apex Logic Filtering",
+      "step4": "Titan Critique Initiated",
+      "step5": "Multi-Model Parallel Execution",
+      "step6": "Deep Verify Cross-Check",
+      "step7": "Quantum Refine Polishing",
+      "step8": "Matrix Format Structuring",
+      "step9": "Final Guard Compliance",
+      "step10": "Final Aggregation Complete"
+    },
+    "status": {
+      "running": "RUNNING",
+      "completed": "DONE",
+      "error": "ERROR",
+      "idle": "IDLE"
+    },
+    "telemetry": {
+      "responseTime": "Response Time",
+      "tokensUsed": "Tokens Used",
+      "modelUsed": "Model",
+      "reasoningTime": "Reasoning Time"
+    }
+  },
+  "chat": {
+    "placeholder": "Type your message...",
+    "send": "Send",
+    "synthesizing": "SYNTHESIZING...",
+    "runPipeline": "RUN PIPELINE",
+    "aiThinking": "AI is thinking...",
+    "flashReady": "Flash ready ⚡",
+    "startConversation": "Start a conversation...",
+    "loading": "Loading...",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "delete": "Delete",
+    "edit": "Edit",
+    "reply": "Reply",
+    "regenerate": "Regenerate"
+  },
+  "summary": {
+    "title": "Conversation Summary",
+    "quickLook": "Quick Look",
+    "keyTopics": "Key Topics",
+    "actionItems": "Action Items",
+    "userPreferences": "User Preferences",
+    "fullSummary": "Full Summary",
+    "generate": "Generate Summary",
+    "generating": "Generating...",
+    "copy": "Copy",
+    "copied": "Copied!",
+    "exportPDF": "Export PDF",
+    "exportJSON": "Export JSON",
+    "addToChat": "Add to Chat",
+    "close": "Close",
+    "noMessages": "Not enough messages to generate a summary. Start chatting first!",
+    "expand": "Expand",
+    "collapse": "Collapse",
+    "lastUpdated": "Last updated"
+  },
+  "features": {
+    "drp": {
+      "label": "DRP",
+      "fullName": "Deep Research Plus",
+      "description": "Enhanced research capabilities with deeper analysis",
+      "comingSoon": "Coming Soon"
+    },
+    "web": {
+      "label": "WEB",
+      "fullName": "Web Max",
+      "description": "Enhanced web search for final aggregation",
+      "comingSoon": "Coming Soon"
+    }
+  },
+  "sidebar": {
+    "title": "Chat History",
+    "search": "Search conversations...",
+    "noResults": "No conversations found",
+    "delete": "Delete",
+    "rename": "Rename",
+    "today": "Today",
+    "yesterday": "Yesterday",
+    "thisWeek": "This Week",
+    "older": "Older"
+  },
+  "errors": {
+    "generic": "Something went wrong. Please try again.",
+    "network": "Network error. Check your connection.",
+    "timeout": "Request timed out. Please try again.",
+    "invalidInput": "Invalid input. Please check your message.",
+    "apiError": "API error. Please try again later.",
+    "notEnoughInput": "Please enter at least {min} characters for this mode."
+  },
+  "accessibility": {
+    "toggleLanguage": "Toggle language",
+    "closeModal": "Close modal",
+    "openMenu": "Open menu",
+    "skipToContent": "Skip to content"
+  },
+  "footer": {
+    "copyright": "© 2025 NEXUS AI",
+    "madeBy": "Made by Mohamed Matany",
+    "version": "Version 1.0"
+  }
+}

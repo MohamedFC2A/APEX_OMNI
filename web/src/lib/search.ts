@@ -5,14 +5,16 @@
 
 import type { ChatSession, ChatMessage } from "@/types/chat";
 
-export interface SearchResult {
+export type SearchResult = {
   sessionId: string;
   sessionTitle: string;
-  messageId: string;
-  message: ChatMessage;
   snippet: string;
   matchScore: number;
-}
+  timestamp: number;
+} & (
+  | { type: "message"; messageId: string; message: ChatMessage }
+  | { type: "summary" }
+);
 
 export interface SearchOptions {
   query: string;
@@ -113,6 +115,7 @@ export function searchChatHistory(options: SearchOptions): SearchResult[] {
   for (const [sid, session] of Object.entries(sessionsToSearch)) {
     if (!session) continue;
     
+    // Search messages
     for (const message of session.messages) {
       // Skip deleted messages
       if (message.meta?.isDeleted) continue;
@@ -134,12 +137,50 @@ export function searchChatHistory(options: SearchOptions): SearchResult[] {
         results.push({
           sessionId: sid,
           sessionTitle: session.title,
+          type: "message",
           messageId: message.id,
           message,
           snippet,
           matchScore: score,
+          timestamp: message.createdAt
         });
       }
+    }
+
+    // Search summary
+    if (session.summary) {
+      try {
+        const summaryData = JSON.parse(session.summary);
+        // Concatenate all text to search
+        const summaryText = [
+            summaryData.quickLook, 
+            ...(summaryData.keyTopics || []), 
+            ...(summaryData.actionItems || []), 
+            ...(summaryData.userPreferences || []), 
+            summaryData.fullSummary
+        ].join(" ");
+
+        let matches = false;
+        if (fuzzy) {
+          matches = fuzzyMatch(query, summaryText);
+        } else {
+          matches = summaryText.toLowerCase().includes(query.toLowerCase());
+        }
+
+        if (matches) {
+          const score = calculateScore(summaryText, query);
+          const snippet = extractSnippet(summaryText, query);
+          
+          results.push({
+            sessionId: sid,
+            sessionTitle: session.title,
+            type: "summary",
+            snippet,
+            matchScore: score,
+            timestamp: session.updatedAt
+          });
+        }
+      } catch {}
     }
   }
   

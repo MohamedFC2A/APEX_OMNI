@@ -12,15 +12,8 @@ const nextConfig = {
       },
     ],
   },
-  async rewrites() {
-    const serverUrl = process.env.NEXUS_SERVER_URL || "http://localhost:4001";
-    return [
-      {
-        source: "/api/nexus/:path*",
-        destination: `${serverUrl}/api/nexus/:path*`,
-      },
-    ];
-  },
+  // API routes are handled locally by Next.js
+  // Remove external rewrites to ensure local API routes work correctly
 };
 
 export default nextConfig;

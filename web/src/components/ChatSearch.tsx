@@ -35,7 +35,9 @@ export function ChatSearch({ isOpen, onClose, onSelectMessage }: ChatSearchProps
   const handleSelectResult = useCallback(
     (result: SearchResult) => {
       selectSession(result.sessionId);
-      onSelectMessage?.(result.sessionId, result.messageId);
+      if (result.type === "message") {
+        onSelectMessage?.(result.sessionId, result.messageId);
+      }
       onClose();
       setQuery("");
     }, [selectSession, onSelectMessage, onClose]
@@ -94,16 +96,33 @@ export function ChatSearch({ isOpen, onClose, onSelectMessage }: ChatSearchProps
             <div className="space-y-1">
               {results.map((result) => (
                 <motion.button
-                  key={`${result.sessionId}-${result.messageId}`}
+                  key={`${result.sessionId}-${result.type === 'message' ? result.messageId : 'summary'}`}
                   onClick={() => handleSelectResult(result)}
                   className="w-full text-left p-3 rounded-lg hover:bg-white/5 transition-colors group"
                   whileHover={{ scale: 1.01 }}
                   whileTap={{ scale: 0.99 }}
                 >
                   <div className="flex items-start gap-3">
+                    {/* Icon based on type */}
+                    <div className={`mt-0.5 p-1 rounded-md ${result.type === 'summary' ? 'bg-purple-500/20 text-purple-300' : 'bg-white/10 text-white/40'}`}>
+                      {result.type === 'summary' ? (
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                        </svg>
+                      ) : (
+                        <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" />
+                        </svg>
+                      )}
+                    </div>
                     <div className="flex-1 min-w-0">
-                      <div className="text-xs text-cyan-400/80 mb-1 truncate">
-                        {result.sessionTitle}
+                      <div className="flex items-center justify-between mb-1">
+                        <div className="text-xs text-cyan-400/80 truncate font-medium">
+                          {result.sessionTitle}
+                        </div>
+                        {result.type === 'summary' && (
+                          <span className="text-[10px] bg-purple-500/20 text-purple-300 px-1.5 py-0.5 rounded ml-2">Summary</span>
+                        )}
                       </div>
                       <div
                         className="text-sm text-white/80 line-clamp-2"
@@ -112,7 +131,7 @@ export function ChatSearch({ isOpen, onClose, onSelectMessage }: ChatSearchProps
                         }}
                       />
                       <div className="text-[10px] text-white/40 mt-1">
-                        {new Date(result.message.createdAt).toLocaleString()}
+                        {new Date(result.timestamp).toLocaleString()}
                       </div>
                     </div>
                     <div className="text-xs text-white/30">

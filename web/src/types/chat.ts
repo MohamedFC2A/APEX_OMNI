@@ -5,16 +5,12 @@
 
 export type ChatRole = "user" | "assistant" | "system";
 
-export type NexusMode = "standard" | "thinking" | "super_thinking";
+export type NexusMode = "FLASH" | "DEEP_THINKING" | "APEX";
 
 export interface ChatMessageMeta {
-  mode?: NexusMode;
-  model?: string;
-  stepInfo?: {
-    totalSteps: number;
-    completedSteps: number;
-  };
-  reasoningContent?: string;
+  modelName?: string;
+  realResponseTimeMs?: number;
+  finalAnswerSummary?: string;
   editedAt?: number;
   isDeleted?: boolean;
   replyTo?: string; // ID of message being replied to
@@ -55,6 +51,10 @@ export interface ChatSession {
   tags?: string[];
   summary?: string;
   category?: string;
+  settings?: {
+    deepResearchPlus?: boolean;
+    webMax?: boolean;
+  };
 }
 
 /**
