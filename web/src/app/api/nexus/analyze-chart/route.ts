@@ -4,13 +4,14 @@ import { NextResponse } from 'next/server';
  * 🛠️ UTILITY: Aggressive JSON Extractor
  * Finds the first valid JSON object in a string, ignoring all text around it.
  */
+// @ts-ignore
 function extractJSON(text: string): any {
     try {
         // 1. Try standard parse first (fast path)
         return JSON.parse(text);
-    } catch (e) {
+    } catch (_) {
         // 2. Remove Markdown wrappers
-        let clean = text.replace(/```json/gi, '').replace(/```/g, '').trim();
+        const clean = text.replace(/```json/gi, '').replace(/```/g, '').trim();
 
         // 3. Find the first '{' and the LAST '}'
         const firstOpen = clean.indexOf('{');

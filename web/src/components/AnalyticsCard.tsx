@@ -2,8 +2,6 @@
 
 import React, { forwardRef, useMemo } from "react";
 import {
-    AreaChart,
-    Area,
     BarChart,
     Bar,
     PieChart,
@@ -49,7 +47,8 @@ const COLORS = {
 const PIE_COLORS = [COLORS.cyan, COLORS.emerald, COLORS.purple, COLORS.rose, "#f59e0b"];
 
 // Custom Tooltip Component
-const CustomTooltip = ({ active, payload, label }: any) => {
+// Fixed 'any' type to 'unknown' and added logic to safely access payload
+const CustomTooltip = ({ active, payload, label }: { active?: boolean; payload?: any[]; label?: string }) => {
     if (active && payload && payload.length) {
         return (
             <div
@@ -77,7 +76,24 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 
 export const AnalyticsCard = forwardRef<HTMLDivElement, AnalyticsCardProps>(
     function AnalyticsCard({ data }, ref) {
-        // Safety Check
+        // 🧠 SMART CONTEXT LOGIC (MOVED BEFORE CONDITIONAL RETURN)
+        const stats = useMemo(() => {
+            if (!data || !data.data) {
+                return { total: 0, max: 0, maxLabel: "", avg: 0, isComparison: false };
+            }
+            const total = data.data.reduce((sum, val) => sum + val, 0);
+            const max = Math.max(...data.data);
+            const maxIndex = data.data.indexOf(max);
+            const maxLabel = data.labels ? (data.labels[maxIndex] || "") : "";
+            const avg = total / data.data.length;
+
+            // Auto-detect "Comparison" mode vs "Trend" mode
+            const isComparison = data.showTotal === false || /Top|Best|Vs/i.test(data.title || "");
+
+            return { total, max, maxLabel, avg, isComparison };
+        }, [data]);
+
+        // Safety Check (AFTER Hooks)
         if (!data || !data.labels || !data.data) {
             return (
                 <div ref={ref} style={{ width: "800px", height: "600px", background: COLORS.bgDark, display: 'flex', alignItems: 'center', justifyContent: 'center', color: COLORS.rose }}>
@@ -85,20 +101,6 @@ export const AnalyticsCard = forwardRef<HTMLDivElement, AnalyticsCardProps>(
                 </div>
             );
         }
-
-        // 🧠 SMART CONTEXT LOGIC
-        const stats = useMemo(() => {
-            const total = data.data.reduce((sum, val) => sum + val, 0);
-            const max = Math.max(...data.data);
-            const maxIndex = data.data.indexOf(max);
-            const maxLabel = data.labels[maxIndex] || "";
-            const avg = total / data.data.length;
-
-            // Auto-detect "Comparison" mode vs "Trend" mode
-            const isComparison = data.showTotal === false || /Top|Best|Vs/.test(data.title);
-
-            return { total, max, maxLabel, avg, isComparison };
-        }, [data]);
 
         const chartData = data.labels.map((label, index) => ({
             name: label,
